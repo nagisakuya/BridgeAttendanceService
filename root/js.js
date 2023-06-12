@@ -45,7 +45,7 @@ function signup() {
     let params = new URL(window.location.href).searchParams;
     let user_id = params.get('user_id');
     if (user_id) {
-        document.cookie = 'user_id=${user_id}';
-        console.log('✅ ログインしました user_id=${user_id}');
+        document.cookie = `user_id=${user_id}`;
+        console.log(`✅ ログインしました user_id=${user_id}`);
     }
 }

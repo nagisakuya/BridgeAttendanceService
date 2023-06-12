@@ -5,7 +5,13 @@ function receivePushNotification(event) {
   const attendance_id = json.attendance_id;
   const user_id = json.user_id;
 
-  const url = `result?attendance_id=${attendance_id};user_id=${user_id}`;
+  var url = '';
+  if (attendance_id){
+    url = `result?attendance_id=${attendance_id}&user_id=${user_id}`;
+  }else{
+    url = `index`;
+  }
+  
 
   const options = {
     data: url,

@@ -10,7 +10,7 @@ pub enum Todo {
     },
     Test,
     SendMessage {
-        contents: line::SimpleMessage,
+        contents: String,
     },
     Nothing,
 }
@@ -32,21 +32,14 @@ impl Todo {
                 let attendance = get_attendance_status(attendance_id).await.unwrap();
                 let attend = attendance.attend.len();
                 if attend < 4 {
-                    let message = line::PushMessage {
-                        to: SETTINGS.BINDED_GROUP_ID.clone(),
-                        messages: vec![Box::new(line::SimpleMessage::new(
-                            "今のところ卓が立たなさそうです！！！やばいです！！！",
-                        ))],
-                    };
-                    message.send().await;
+                    for user_id in attendance.attend {
+                        let message = line::SimpleMessage::new("今のところ卓が立たなさそうです！！！やばいです！！！");
+                        line::push_message(&user_id,message).await;
+                    }
                 }
             }
             Self::SendMessage {contents} =>{
-                let sender = line::PushMessage{
-                    to:SETTINGS.BINDED_GROUP_ID.clone(),
-                    messages:vec![Box::new(contents.clone())]
-                };
-                sender.send().await;
+                push_cancel_notification("今日の練習会は休みです", &format!("理由:{contents}")).await;
             }
             Self::Nothing => {}
         }

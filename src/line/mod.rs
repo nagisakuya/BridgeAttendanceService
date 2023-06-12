@@ -13,11 +13,14 @@ pub struct BloadcastMessage {
 }
 impl BloadcastMessage {
     pub async fn send(&self) {
-        let _ = send_post_request(
+        let result = send_post_request(
             "https://api.line.me/v2/bot/message/broadcast",
             &serde_json::to_string(self).unwrap(),
         )
         .await;
+        if result.is_err() {
+            println!("{:?}", result.unwrap().text().await);
+        }
     }
 }
 
@@ -34,7 +37,9 @@ impl PushMessage {
             &serde_json::to_string(self).unwrap(),
         )
         .await;
-        println!("{:?}", responce);
+        if responce.is_err() {
+            println!("{:?}", responce);
+        }
     }
 }
 
@@ -53,7 +58,6 @@ pub async fn push_messages(to: &str, messages: Vec<Box<dyn Message>>) {
     };
     message.send().await;
 }
-
 
 async fn send_get_request(url: &str) -> AsyncResult<reqwest::Response> {
     let client = reqwest::Client::new();
@@ -74,5 +78,3 @@ async fn send_post_request(url: &str, body: &str) -> AsyncResult<reqwest::Respon
         .send()
         .await?)
 }
-
-

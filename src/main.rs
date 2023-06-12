@@ -28,7 +28,6 @@ struct Settings {
     TLS_KEY_DIR_PATH: PathBuf,
     HOST: String,
     LISTENING_ADDRESS: String,
-    BINDED_GROUP_ID: String,
     DEFAULT_ICON_URL: String,
 }
 
@@ -100,7 +99,7 @@ async fn signup(user_id: &str) {
         return;
     };
 
-    let result = sqlx::query(&format!("replace into users(id,name,image) values(?,?,?)"))
+    sqlx::query(&format!("replace into users(id,name,image) values(?,?,?)"))
         .bind(&profile.userId)
         .bind(profile.displayName)
         .bind(
@@ -110,10 +109,7 @@ async fn signup(user_id: &str) {
                 .unwrap_or(&SETTINGS.DEFAULT_ICON_URL),
         )
         .execute(DB.get().unwrap())
-        .await;
-    if result.is_err() {
-        return;
-    }
+        .await.unwrap();
 }
 
 async fn index(Query(params): Query<HashMap<String, String>>) -> Result<Html<String>, StatusCode> {
@@ -131,7 +127,7 @@ async fn index(Query(params): Query<HashMap<String, String>>) -> Result<Html<Str
         let description: String = item.get("description");
 
         let line = format!(
-            r#"<a href="result?attendance_id={}">{}</a><br>"#,
+            r#"<div class="link"><a href="result?attendance_id={}">{}</a></div><br>"#,
             attendance_id, description
         );
 
@@ -192,7 +188,8 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
                 resieve_message(event).await;
             }
             Some("follw") => {
-                resieve_follow(event).await;
+                let user_id = event.get("source").unwrap().get("userId").unwrap().as_str().unwrap();
+                send_follow_messages(&user_id).await;
             }
             _ => (),
         }
@@ -201,27 +198,23 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
     StatusCode::OK
 }
 
-async fn resieve_follow(event: &Value) -> Option<()> {
-    let user_id = event.get("source")?.get("userId")?.as_str()?;
-    let signup_url = format!("https://{}/index?user_id={}", SETTINGS.HOST, user_id);
+async fn send_follow_messages(user_id:&str) {
+    let signup_url = format!(r"https://{}/index?user_id={}", SETTINGS.HOST, user_id);
 
     let first_message = SimpleMessage::new(
-        "友達登録ありがとうございます😊/n下のボタンから出欠システムにアクセスできます！",
+        "友達登録ありがとうございます😊\n下のボタンから出欠システムにアクセスできます！",
     );
 
     let mut flex = fs::read_to_string("button.json").unwrap();
     flex = flex.replace("%SIGNUP_URL%", &signup_url);
+    let second_message = FlexMessage::new(serde_json::from_str(&flex).unwrap(), "flexメッセージ");
 
-    //todo
-    //let third_message = SimpleMessage::new("iosの場合はホーム画面にアイコンを");
+    let third_message = SimpleMessage::new("通知機能を使うために、iosの場合はホーム画面にアイコンを追加してね。");
 
-    let second_message = FlexMessage::new(Value::from(flex), "flexメッセージ");
-    let _ = line::push_messages(
+    line::push_messages(
         user_id,
-        vec![Box::new(first_message), Box::new(second_message)],
-    );
-
-    Some(())
+        vec![Box::new(first_message), Box::new(second_message),Box::new(third_message)],
+    ).await;
 }
 
 async fn insert_attendance(event: &Value) -> Option<()> {
@@ -236,21 +229,21 @@ async fn insert_attendance(event: &Value) -> Option<()> {
         .fetch_one(DB.get().unwrap())
         .await;
     if result.is_ok() {
-        let _ = sqlx::query(&format!(
+        sqlx::query(&format!(
             "update {attendance_id} set status=? where user_id=?"
         ))
         .bind(status)
         .bind(user_id)
         .execute(DB.get().unwrap())
-        .await;
+        .await.unwrap();
     } else {
-        let _ = sqlx::query(&format!(
+        sqlx::query(&format!(
             "insert into {attendance_id}(user_id,status) values(?,?)"
         ))
         .bind(user_id)
         .bind(status)
         .execute(DB.get().unwrap())
-        .await;
+        .await.unwrap();
     }
     Some(())
 }
@@ -261,21 +254,22 @@ async fn resieve_message(event: &Value) -> Option<()> {
         return None;
     }
     //let reply_token = event.get("replyToken")?.as_str()?;
+    let author = event.get("source")?.get("userId")?.as_str()?;
+
     let text = message.get("text")?.as_str()?.to_string();
     let lines: Vec<&str> = text.lines().collect();
     let text = match *lines.first()? {
         "休み登録" => push_exception(lines).await.get(),
         "イベント登録" => push_event(lines).await.get(),
         "使い方" => fs::read_to_string("usage.txt").unwrap(),
+        "フォロー" => {
+            send_follow_messages(author).await;
+            return None;
+        },
         _ => {
-            if event.get("source")?.get("type")? == "user" {
-                "「使い方」と送ると使い方が見れます".to_string()
-            } else {
-                return None;
-            }
+            return None;
         }
     };
-    let author = event.get("source")?.get("userId")?.as_str()?;
     line::push_message(author, line::SimpleMessage::new(&text)).await;
     Some(())
 }
@@ -331,7 +325,7 @@ async fn push_exception(args: Vec<&str>) -> LineResponse {
     }
     let todo = match reason {
         Some(o) => Todo::SendMessage {
-            contents: line::SimpleMessage::new(o),
+            contents: o.to_string(),
         },
         None => Todo::Nothing,
     };
@@ -428,8 +422,6 @@ async fn result_page(
 
     let attendance_data = attendance_data.unwrap();
 
-    let group_id: String = attendance_data.get("group_id");
-
     let title: String = attendance_data.get("description");
 
     let mut html = fs::read_to_string("result_page.html").unwrap();
@@ -438,37 +430,26 @@ async fn result_page(
     html = html.replace("%HOLDING%", &holding.len().to_string());
     html = html.replace("%ABSENT%", &absent.len().to_string());
 
-    async fn ids_to_name(user_ids: &Vec<String>, group_id: &str) -> String {
+    async fn ids_to_name(user_ids: &Vec<String>) -> String {
         let mut buf = String::default();
-        let mut futures = vec![];
         for user_id in user_ids {
-            futures.push(tokio::spawn(line::get_user_profile_from_group(
-                user_id.to_owned(),
-                group_id.to_owned(),
-            )));
-        }
-        let mut result = vec![];
-        for future in futures {
-            result.push(future.await.unwrap());
-        }
-        for profile in result {
-            buf += &profile.map_or("UNKNOWN_USER".to_string(), |profile| {
-                let url = profile
-                    .pictureUrl
-                    .unwrap_or_else(|| SETTINGS.DEFAULT_ICON_URL.to_string());
-                let icon = format!(r####"<img src="{url}" alt="icon" class="icon">"####);
-                format!(
+            let Ok(row) = sqlx::query("select * from users where user_id=?").bind(user_id).fetch_one(DB.get().unwrap()).await else {continue;};
+            let name:String = row.get("name");
+            let picture_url:String = row.get("image");
+            buf += {
+                let icon = format!(r####"<img src="{picture_url}" alt="icon" class="icon">"####);
+                &format!(
                     r##"<div class="box">{}{}</div><br>"##,
-                    icon, profile.displayName
+                    icon, name
                 )
-            });
+            };
         }
         buf
     }
 
-    let attends = ids_to_name(&attend, &group_id);
-    let holdings = ids_to_name(&holding, &group_id);
-    let absents = ids_to_name(&absent, &group_id);
+    let attends = ids_to_name(&attend);
+    let holdings = ids_to_name(&holding);
+    let absents = ids_to_name(&absent);
 
     let (attends, holdings, absents) = tokio::join!(attends, holdings, absents);
     html = html.replace("%ATTENDS%", &attends);
@@ -492,9 +473,8 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
     );
 
     //sqlに登録
-    sqlx::query("insert into attendances(description,group_id,finishing_schedule,attendance_id) values(?,?,?,?)")
+    sqlx::query("insert into attendances(description,finishing_schedule,attendance_id) values(?,?,?)")
     .bind(&text)
-    .bind(&SETTINGS.BINDED_GROUP_ID)
     .bind(finishing_time)
     .bind(&attendance_id)
     .execute(DB.get().unwrap()).await.unwrap();
@@ -508,7 +488,7 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
     .unwrap();
 
     //通知を送信
-    //todo
+    push_attendance_notification(&attendance_id).await;
 
     Schedule {
         id: "".to_string(),
@@ -519,22 +499,28 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
     }
 }
 
-#[derive(serde::Serialize,serde::Deserialize)]
-struct NotificationBody {
-    title: String,
-    message: String,
-    attendance_id: String,
-    user_id: String,
+async fn push_attendance_notification(attendance_id:&str){
+    let quote = get_random_quote().await;
+
+        let row = sqlx::query("select * from attendances where attendance_id = ?").bind(&attendance_id).fetch_one(DB.get().unwrap()).await.unwrap();
+        let title:String = row.get("description");
+
+        push_notification(&title,&quote,Some(attendance_id.to_string())).await;
 }
 
-async fn push_notification(attendance_id:&str) {
-    use web_push::*;
-    let attendance_checks = sqlx::query("select * from notification")
-        .fetch_all(DB.get().unwrap())
-        .await
-        .unwrap();
+async fn push_cancel_notification(title:&str,reason:&str){
+    push_notification(title,reason,None).await;
+}
 
-    for item in attendance_checks {
+async fn push_notification(title:&str,message:&str,attendance_id:Option<String>) {
+    use web_push::*;
+
+    let notification_list = sqlx::query("select * from notification")
+    .fetch_all(DB.get().unwrap())
+    .await
+    .unwrap();
+    
+    for item in notification_list {
         let user_id: String = item.get("user_id");
         let endpoint: String = item.get("endpoint");
         let key: String = item.get("key");
@@ -549,11 +535,9 @@ async fn push_notification(attendance_id:&str) {
 
         let mut builder = WebPushMessageBuilder::new(&subscription_info).unwrap();
 
-        let row = sqlx::query("select * from attendances where attendance_id = ?").bind(&attendance_id).fetch_one(DB.get().unwrap()).await.unwrap();
-        let title:String = row.get("description");
         let json = serde_json::json!{{
             "title" : title,
-            "message": "title",
+            "message": message,
             "attendance_id": attendance_id,
             "user_id": user_id,
         }};
@@ -570,10 +554,16 @@ async fn push_notification(attendance_id:&str) {
     }
 }
 
-#[tokio::test]
-async fn test(){
-    initialize_db().await;
-    push_notification("").await;
+async fn get_random_quote() -> String{
+    const DEFAULT_QUOTE:&str = "俺はユース日本一";
+    let client = reqwest::Client::new();
+    let Ok(resp) = client
+        .get("https://meigen.doodlenote.net/api/json.php")
+        .query(&[("c", "1")])
+        .send()
+        .await else{return DEFAULT_QUOTE.to_string()};
+    let json = Value::from_str(&resp.text().await.unwrap()).unwrap();
+    json.as_array().unwrap().get(0).unwrap().get("meigen").unwrap().as_str().unwrap().to_string()
 }
 
 async fn subscribe(body: Bytes) -> StatusCode {
