@@ -29,7 +29,7 @@ impl Todo {
             Self::SendAttendanceInfo {
                 attendance_id,
             } => {
-                let attendance = get_attendance_status(attendance_id).await;
+                let attendance = get_attendance_status(attendance_id).await.unwrap();
                 let attend = attendance.attend.len();
                 if attend < 4 {
                     let message = line::PushMessage {

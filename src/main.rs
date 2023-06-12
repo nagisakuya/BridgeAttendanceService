@@ -1,11 +1,11 @@
-use axum::body::{Bytes};
-use axum::extract::{ Query};
+use axum::body::Bytes;
+use axum::extract::Query;
 use axum::response::Html;
-use axum::*;
 use axum::routing::get_service;
+use axum::*;
 use axum_server::tls_rustls::*;
 use chrono::{prelude::*, Duration, FixedOffset};
-use line::{SimpleMessage, FlexMessage};
+use line::{FlexMessage, SimpleMessage};
 use once_cell::sync::{Lazy, OnceCell};
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -50,27 +50,25 @@ async fn initialize_scheduler() {
         .unwrap();
 }
 
-type AsyncResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type AsyncResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[tokio::main]
 async fn main() -> AsyncResult<()> {
     initialize_db().await;
     initialize_scheduler().await;
 
-    let root = get_service(tower_http::services::ServeDir::new("root"))
-    .handle_error(|error: std::io::Error| async move {
-        (
-            StatusCode::NOT_FOUND,
-            format!("file not found: {}", error),
-        )
-    });
+    let root = get_service(tower_http::services::ServeDir::new("root")).handle_error(
+        |error: std::io::Error| async move {
+            (StatusCode::NOT_FOUND, format!("file not found: {}", error))
+        },
+    );
 
     let app = Router::new()
         .route("/index", routing::get(index))
-        .route("/signup", routing::get(signup))
         .route("/line/webhook", routing::post(resieve_webhook))
         .route("/result", routing::get(result_page))
         .route("/register", routing::post(register))
+        .route("/subscribe", routing::post(subscribe))
         .nest_service("/", root);
 
     let rustls_config = RustlsConfig::from_pem_file(
@@ -97,32 +95,29 @@ async fn main() -> AsyncResult<()> {
     Ok(())
 }
 
-async fn signup(Query(params): Query<HashMap<String, String>>) -> Result<Html<String>, StatusCode> {
-    let Some(user_id) = params.get("user_id") else {
-        return Err(StatusCode::BAD_REQUEST)
-    };
-
+async fn signup(user_id: &str) {
     let Some(profile) = line::get_user_profile_from_friend(user_id.to_string()).await else {
-        return Err(StatusCode::UNAUTHORIZED)
+        return;
     };
 
     let result = sqlx::query(&format!("replace into users(id,name,image) values(?,?,?)"))
         .bind(&profile.userId)
         .bind(profile.displayName)
-        .bind(profile.pictureUrl.as_ref().unwrap_or(&SETTINGS.DEFAULT_ICON_URL))
+        .bind(
+            profile
+                .pictureUrl
+                .as_ref()
+                .unwrap_or(&SETTINGS.DEFAULT_ICON_URL),
+        )
         .execute(DB.get().unwrap())
         .await;
     if result.is_err() {
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        return;
     }
-
-    let mut html = fs::read_to_string("signup.html").unwrap();
-    html = html.replace("%USER_ID%", &profile.userId);
-
-    Ok(Html::from(html))
 }
 
-async fn index() -> Result<Html<String>, StatusCode> {
+async fn index(Query(params): Query<HashMap<String, String>>) -> Result<Html<String>, StatusCode> {
+    if let Some(user_id) = params.get("user_id") {signup(user_id).await};
     let mut html = fs::read_to_string("index.html").unwrap();
 
     let mut buf = String::new();
@@ -156,13 +151,19 @@ async fn register(body: Bytes) -> StatusCode {
     let Some(Some(user_id)) = json.get("user_id").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
     let Some(Some(request_type)) = json.get("request_type").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
 
-    if request_type!="attend" && request_type!="holding" && request_type!="absent" {
+    if request_type != "attend" && request_type != "holding" && request_type != "absent" {
         return StatusCode::BAD_REQUEST;
     }
 
     if let Err(_) = sqlx::query(&format!(
         "replace into {attendance_id} (user_id, status) values (?, '{request_type}')",
-    )).bind(user_id).execute(DB.get().unwrap()).await { return StatusCode::INTERNAL_SERVER_ERROR };
+    ))
+    .bind(user_id)
+    .execute(DB.get().unwrap())
+    .await
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
 
     StatusCode::OK
 }
@@ -181,7 +182,7 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
     let Some(events) = json.get("events") else { return StatusCode::BAD_REQUEST };
     let Some(events) = events.as_array() else { return StatusCode::BAD_REQUEST };
 
-    for event in events{
+    for event in events {
         let event_type = event.get("type").map(|f| f.as_str().unwrap_or_default());
         match event_type {
             Some("postback") => {
@@ -200,11 +201,13 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
     StatusCode::OK
 }
 
-async fn resieve_follow(event: &Value)-> Option<()> {
+async fn resieve_follow(event: &Value) -> Option<()> {
     let user_id = event.get("source")?.get("userId")?.as_str()?;
-    let signup_url = format!("https://{}/signup?user_id={}", SETTINGS.HOST, user_id);
+    let signup_url = format!("https://{}/index?user_id={}", SETTINGS.HOST, user_id);
 
-    let first_message = SimpleMessage::new("友達登録ありがとうございます😊/n下のボタンから出欠システムにアクセスできます！");
+    let first_message = SimpleMessage::new(
+        "友達登録ありがとうございます😊/n下のボタンから出欠システムにアクセスできます！",
+    );
 
     let mut flex = fs::read_to_string("button.json").unwrap();
     flex = flex.replace("%SIGNUP_URL%", &signup_url);
@@ -214,7 +217,8 @@ async fn resieve_follow(event: &Value)-> Option<()> {
 
     let second_message = FlexMessage::new(Value::from(flex), "flexメッセージ");
     let _ = line::push_messages(
-        user_id,vec![Box::new(first_message),Box::new(second_message)]
+        user_id,
+        vec![Box::new(first_message), Box::new(second_message)],
     );
 
     Some(())
@@ -381,33 +385,31 @@ struct Attendance {
     holding: Vec<String>,
     absent: Vec<String>,
 }
-async fn get_attendance_status(attendance_id: &str) -> Attendance {
+async fn get_attendance_status(attendance_id: &str) -> AsyncResult<Attendance> {
     let query = &format!("select * from {attendance_id} where status = ?");
     let attend: Vec<String> = sqlx::query_scalar(query)
         .bind("attend")
         .fetch_all(DB.get().unwrap())
-        .await
-        .unwrap();
+        .await?;
     let holding: Vec<String> = sqlx::query_scalar(query)
         .bind("holding")
         .fetch_all(DB.get().unwrap())
-        .await
-        .unwrap();
+        .await?;
     let absent: Vec<String> = sqlx::query_scalar(query)
         .bind("absent")
         .fetch_all(DB.get().unwrap())
-        .await
-        .unwrap();
-    Attendance {
+        .await?;
+    Ok(Attendance {
         attend,
         holding,
         absent,
-    }
+    })
 }
 
 async fn result_page(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Html<String>, StatusCode> {
+    if let Some(user_id) = params.get("user_id") {signup(user_id).await};
     let Some(attendance_id) = params.get("attendance_id") else {return Err(StatusCode::BAD_REQUEST)};
     let attendance = get_attendance_status(&attendance_id);
     let attendance_data = sqlx::query("select * from attendances where attendance_id = ?")
@@ -416,11 +418,13 @@ async fn result_page(
 
     let (attendance, attendance_data) = tokio::join!(attendance, attendance_data);
 
-    let Attendance {
+    let Ok(Attendance {
         attend,
         holding,
         absent,
-    } = attendance;
+    }) = attendance else{
+        return Err(StatusCode::BAD_REQUEST)
+    };
 
     let attendance_data = attendance_data.unwrap();
 
@@ -513,6 +517,85 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
         },
         todo: Todo::SendAttendanceInfo { attendance_id },
     }
+}
+
+#[derive(serde::Serialize,serde::Deserialize)]
+struct NotificationBody {
+    title: String,
+    message: String,
+    attendance_id: String,
+    user_id: String,
+}
+
+async fn push_notification(attendance_id:&str) {
+    use web_push::*;
+    let attendance_checks = sqlx::query("select * from notification")
+        .fetch_all(DB.get().unwrap())
+        .await
+        .unwrap();
+
+    for item in attendance_checks {
+        let user_id: String = item.get("user_id");
+        let endpoint: String = item.get("endpoint");
+        let key: String = item.get("key");
+        let auth: String = item.get("auth");
+        let subscription_info = SubscriptionInfo::new(endpoint, key, auth);
+
+        let file = fs::File::open("private_key.pem").unwrap();
+        let sig_builder = VapidSignatureBuilder::from_pem(file, &subscription_info)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let mut builder = WebPushMessageBuilder::new(&subscription_info).unwrap();
+
+        let row = sqlx::query("select * from attendances where attendance_id = ?").bind(&attendance_id).fetch_one(DB.get().unwrap()).await.unwrap();
+        let title:String = row.get("description");
+        let json = serde_json::json!{{
+            "title" : title,
+            "message": "title",
+            "attendance_id": attendance_id,
+            "user_id": user_id,
+        }};
+
+        let content =  json.to_string().as_bytes().to_owned();
+        builder.set_payload(ContentEncoding::Aes128Gcm, &content);
+        builder.set_vapid_signature(sig_builder);
+
+        let client = WebPushClient::new().unwrap();
+
+        if let Err(e) = client.send(builder.build().unwrap()).await { 
+            println!("プッシュ通知の送信に失敗しました。 エラーコード:{:?} user_id:{}",e,user_id);
+         };
+    }
+}
+
+#[tokio::test]
+async fn test(){
+    initialize_db().await;
+    push_notification("").await;
+}
+
+async fn subscribe(body: Bytes) -> StatusCode {
+    let Ok(body) = String::from_utf8(body.to_vec()) else { return StatusCode::BAD_REQUEST };
+    println!("{}", body);
+    let Ok(json):Result<Value,_> = serde_json::from_str(&body) else { return StatusCode::BAD_REQUEST };
+
+    let Some(Some(user_id)) = json.get("user_id").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
+    let Some(Some(endpoint)) = json.get("endpoint").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
+    let Some(Some(key)) = json.get("key").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
+    let Some(Some(auth)) = json.get("auth").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
+
+    sqlx::query("replace into notification(user_id,endpoint,key,auth) values(?,?,?,?)")
+        .bind(user_id)
+        .bind(endpoint)
+        .bind(key)
+        .bind(auth)
+        .execute(DB.get().unwrap())
+        .await
+        .unwrap();
+
+    StatusCode::OK
 }
 
 fn weekday_to_jp(weekday: chrono::Weekday) -> String {

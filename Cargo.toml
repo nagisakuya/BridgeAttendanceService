@@ -21,3 +21,4 @@ toml = "*"
 async-recursion = "1.0.2"
 once_cell = "*"
 tower-http = {version="*",features=["fs"]}
+web-push = "0.9.5"
