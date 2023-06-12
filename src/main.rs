@@ -1,7 +1,8 @@
-use axum::body::Bytes;
-use axum::extract::{Path, Query};
+use axum::body::{Bytes};
+use axum::extract::{ Query};
 use axum::response::Html;
 use axum::*;
+use axum::routing::get_service;
 use axum_server::tls_rustls::*;
 use chrono::{prelude::*, Duration, FixedOffset};
 use line::{SimpleMessage, FlexMessage};
@@ -56,12 +57,21 @@ async fn main() -> AsyncResult<()> {
     initialize_db().await;
     initialize_scheduler().await;
 
+    let root = get_service(tower_http::services::ServeDir::new("root"))
+    .handle_error(|error: std::io::Error| async move {
+        (
+            StatusCode::NOT_FOUND,
+            format!("file not found: {}", error),
+        )
+    });
+
     let app = Router::new()
         .route("/index", routing::get(index))
         .route("/signup", routing::get(signup))
         .route("/line/webhook", routing::post(resieve_webhook))
         .route("/result", routing::get(result_page))
-        .route("/register", routing::post(register));
+        .route("/register", routing::post(register))
+        .nest_service("/", root);
 
     let rustls_config = RustlsConfig::from_pem_file(
         SETTINGS.TLS_KEY_DIR_PATH.join("fullchain.pem"),
@@ -266,7 +276,7 @@ async fn resieve_message(event: &Value) -> Option<()> {
     Some(())
 }
 
-enum Response {
+enum LineResponse {
     Success(String),
     DateParseError,
     NotEnoughArgment,
@@ -274,23 +284,23 @@ enum Response {
     UnvalidDate,
     EventNotFound,
 }
-impl Response {
+impl LineResponse {
     fn get(self) -> String {
         match self {
-            Response::Success(s) => s,
-            Response::DateParseError => "日付の形式が違います".to_owned(),
-            Response::NotEnoughArgment => "パラメータが足りません".to_owned(),
-            Response::PassedDate => "過去の日付です".to_owned(),
-            Response::UnvalidDate => "不正な日付です".to_owned(),
-            Response::EventNotFound => "イベントが見つかりません".to_owned(),
+            LineResponse::Success(s) => s,
+            LineResponse::DateParseError => "日付の形式が違います".to_owned(),
+            LineResponse::NotEnoughArgment => "パラメータが足りません".to_owned(),
+            LineResponse::PassedDate => "過去の日付です".to_owned(),
+            LineResponse::UnvalidDate => "不正な日付です".to_owned(),
+            LineResponse::EventNotFound => "イベントが見つかりません".to_owned(),
         }
     }
 }
 
-async fn push_exception(args: Vec<&str>) -> Response {
-    let Some(&name) = args.get(1) else {return Response::NotEnoughArgment};
-    let Some(&date) = args.get(2) else {return Response::NotEnoughArgment};
-    let Ok(date) = NaiveDate::parse_from_str(date,"%Y/%m/%d")else {return Response::DateParseError};
+async fn push_exception(args: Vec<&str>) -> LineResponse {
+    let Some(&name) = args.get(1) else {return LineResponse::NotEnoughArgment};
+    let Some(&date) = args.get(2) else {return LineResponse::NotEnoughArgment};
+    let Ok(date) = NaiveDate::parse_from_str(date,"%Y/%m/%d")else {return LineResponse::DateParseError};
     let reason = args.get(3);
     let mut scheduler = SCHEDULER.get().unwrap().lock().await;
     let Some(&mut Schedule {
@@ -301,10 +311,10 @@ async fn push_exception(args: Vec<&str>) -> Response {
                 ref mut exception,
             },
         ..
-    }) = scheduler.get_mut(name) else {return Response::EventNotFound};
+    }) = scheduler.get_mut(name) else {return LineResponse::EventNotFound};
 
     if weekday != date.weekday() {
-        return Response::UnvalidDate;
+        return LineResponse::UnvalidDate;
     }
     let datetime = {
         let local = NaiveDateTime::new(date, time)
@@ -313,7 +323,7 @@ async fn push_exception(args: Vec<&str>) -> Response {
         DateTime::<Utc>::from_utc(local.naive_utc(), Utc)
     };
     if datetime < Utc::now() {
-        return Response::PassedDate;
+        return LineResponse::PassedDate;
     }
     let todo = match reason {
         Some(o) => Todo::SendMessage {
@@ -329,14 +339,14 @@ async fn push_exception(args: Vec<&str>) -> Response {
     exception.push(temp);
 
     scheduler.save_shedule("schedule.json").await.unwrap();
-    Response::Success("休み登録成功".to_owned())
+    LineResponse::Success("休み登録成功".to_owned())
 }
 
-async fn push_event(args: Vec<&str>) -> Response {
-    let Some(&name) = args.get(1) else {return Response::NotEnoughArgment};
-    let Some(&date) = args.get(2) else {return Response::NotEnoughArgment};
+async fn push_event(args: Vec<&str>) -> LineResponse {
+    let Some(&name) = args.get(1) else {return LineResponse::NotEnoughArgment};
+    let Some(&date) = args.get(2) else {return LineResponse::NotEnoughArgment};
     let duration_hour: Option<i64> = args.get(3).map(|x| x.parse().ok()).unwrap_or_default();
-    let Ok(date) = NaiveDateTime::parse_from_str(date,"%Y/%m/%d %H:%M") else {return Response::DateParseError};
+    let Ok(date) = NaiveDateTime::parse_from_str(date,"%Y/%m/%d %H:%M") else {return LineResponse::DateParseError};
     let date = date.and_local_timezone(*TIMEZONE).unwrap();
 
     if let Some(hour) = duration_hour {
@@ -347,7 +357,7 @@ async fn push_event(args: Vec<&str>) -> Response {
                 datetime: {
                     let send = date - Duration::hours(hour);
                     if send < Utc::now() {
-                        return Response::PassedDate;
+                        return LineResponse::PassedDate;
                     }
                     DateTime::<Utc>::from_utc(send.naive_utc(), Utc)
                 },
@@ -356,13 +366,13 @@ async fn push_event(args: Vec<&str>) -> Response {
         };
         scheduler.push(schedule).await;
         scheduler.save_shedule("schedule.json").await.unwrap();
-        Response::Success("イベントの登録に成功しました".to_string())
+        LineResponse::Success("イベントの登録に成功しました".to_string())
     } else {
         if date < Utc::now() {
-            return Response::PassedDate;
+            return LineResponse::PassedDate;
         }
         create_attendance_check(DateTime::<Utc>::from_utc(date.naive_utc(), Utc), name).await;
-        Response::Success("イベントを送信しました".to_string())
+        LineResponse::Success("イベントを送信しました".to_string())
     }
 }
 
