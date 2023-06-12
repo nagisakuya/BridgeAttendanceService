@@ -55,7 +55,7 @@ pub async fn push_messages(to: &str, messages: Vec<Box<dyn Message>>) {
 }
 
 
-async fn send_get_request(url: &str) -> Result<reqwest::Response> {
+async fn send_get_request(url: &str) -> AsyncResult<reqwest::Response> {
     let client = reqwest::Client::new();
     Ok(client
         .get(url)
@@ -64,7 +64,7 @@ async fn send_get_request(url: &str) -> Result<reqwest::Response> {
         .await?)
 }
 
-async fn send_post_request(url: &str, body: &str) -> Result<reqwest::Response> {
+async fn send_post_request(url: &str, body: &str) -> AsyncResult<reqwest::Response> {
     let client = reqwest::Client::new();
     Ok(client
         .post(url)

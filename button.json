@@ -1,0 +1,21 @@
+{
+    "type": "bubble",
+    "size": "micro",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "button",
+          "action": {
+            "type": "uri",
+            "label": "出欠システム",
+            "uri": "%SIGNUP_URL%"
+          },
+          "color": "#23c446",
+          "style": "link",
+          "margin": "none"
+        }
+      ]
+    }
+  }

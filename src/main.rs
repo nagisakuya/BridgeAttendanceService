@@ -1,13 +1,15 @@
 use axum::body::Bytes;
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::response::Html;
 use axum::*;
 use axum_server::tls_rustls::*;
 use chrono::{prelude::*, Duration, FixedOffset};
+use line::{SimpleMessage, FlexMessage};
 use once_cell::sync::{Lazy, OnceCell};
 use reqwest::StatusCode;
 use serde_json::Value;
 use sqlx::{Row, Sqlite};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::{fs, path::PathBuf};
@@ -47,18 +49,19 @@ async fn initialize_scheduler() {
         .unwrap();
 }
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type AsyncResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> AsyncResult<()> {
     initialize_db().await;
     initialize_scheduler().await;
 
     let app = Router::new()
-        .route("/ping", routing::get(ping))
-        .route("/test", routing::post(print_request))
+        .route("/index", routing::get(index))
+        .route("/signup", routing::get(signup))
         .route("/line/webhook", routing::post(resieve_webhook))
-        .route("/line/result/:id", routing::get(result_page));
+        .route("/result", routing::get(result_page))
+        .route("/register", routing::post(register));
 
     let rustls_config = RustlsConfig::from_pem_file(
         SETTINGS.TLS_KEY_DIR_PATH.join("fullchain.pem"),
@@ -84,13 +87,73 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn ping() -> &'static str {
-    println!("ping!");
-    "Hello, World!"
+async fn signup(Query(params): Query<HashMap<String, String>>) -> Result<Html<String>, StatusCode> {
+    let Some(user_id) = params.get("user_id") else {
+        return Err(StatusCode::BAD_REQUEST)
+    };
+
+    let Some(profile) = line::get_user_profile_from_friend(user_id.to_string()).await else {
+        return Err(StatusCode::UNAUTHORIZED)
+    };
+
+    let result = sqlx::query(&format!("replace into users(id,name,image) values(?,?,?)"))
+        .bind(&profile.userId)
+        .bind(profile.displayName)
+        .bind(profile.pictureUrl.as_ref().unwrap_or(&SETTINGS.DEFAULT_ICON_URL))
+        .execute(DB.get().unwrap())
+        .await;
+    if result.is_err() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    let mut html = fs::read_to_string("signup.html").unwrap();
+    html = html.replace("%USER_ID%", &profile.userId);
+
+    Ok(Html::from(html))
 }
 
-async fn print_request(body: Bytes) -> StatusCode {
-    println!("{}", String::from_utf8(body.to_vec()).unwrap());
+async fn index() -> Result<Html<String>, StatusCode> {
+    let mut html = fs::read_to_string("index.html").unwrap();
+
+    let mut buf = String::new();
+    let attendance_checks = sqlx::query("select * from attendances")
+        .fetch_all(DB.get().unwrap())
+        .await
+        .unwrap();
+
+    for item in attendance_checks.iter().rev() {
+        let attendance_id: String = item.get("attendance_id");
+        let description: String = item.get("description");
+
+        let line = format!(
+            r#"<a href="result?attendance_id={}">{}</a><br>"#,
+            attendance_id, description
+        );
+
+        buf += &line;
+    }
+
+    html = html.replace("%ATTENDANCE_CHECKS%", &buf);
+    Ok(Html::from(html))
+}
+
+async fn register(body: Bytes) -> StatusCode {
+    let Ok(body) = String::from_utf8(body.to_vec()) else { return StatusCode::BAD_REQUEST };
+    println!("{}", body);
+    let Ok(json):Result<Value,_> = serde_json::from_str(&body) else { return StatusCode::BAD_REQUEST };
+
+    let Some(Some(attendance_id)) = json.get("attendance_id").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
+    let Some(Some(user_id)) = json.get("user_id").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
+    let Some(Some(request_type)) = json.get("request_type").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
+
+    if request_type!="attend" && request_type!="holding" && request_type!="absent" {
+        return StatusCode::BAD_REQUEST;
+    }
+
+    if let Err(_) = sqlx::query(&format!(
+        "replace into {attendance_id} (user_id, status) values (?, '{request_type}')",
+    )).bind(user_id).execute(DB.get().unwrap()).await { return StatusCode::INTERNAL_SERVER_ERROR };
+
     StatusCode::OK
 }
 
@@ -105,26 +168,46 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
         Err(_) => return StatusCode::BAD_REQUEST,
     };
 
-    let event = match json.get("events") {
-        Some(e) => match e.get(0) {
-            Some(e) => e,
-            None => return StatusCode::BAD_REQUEST,
-        },
-        None => return StatusCode::BAD_REQUEST,
-    };
+    let Some(events) = json.get("events") else { return StatusCode::BAD_REQUEST };
+    let Some(events) = events.as_array() else { return StatusCode::BAD_REQUEST };
 
-    let event_type = event.get("type").map(|f| f.as_str().unwrap_or_default());
-    match event_type {
-        Some("postback") => {
-            insert_attendance(event).await;
+    for event in events{
+        let event_type = event.get("type").map(|f| f.as_str().unwrap_or_default());
+        match event_type {
+            Some("postback") => {
+                insert_attendance(event).await;
+            }
+            Some("message") => {
+                resieve_message(event).await;
+            }
+            Some("follw") => {
+                resieve_follow(event).await;
+            }
+            _ => (),
         }
-        Some("message") => {
-            resieve_message(event).await;
-        }
-        _ => (),
     }
 
     StatusCode::OK
+}
+
+async fn resieve_follow(event: &Value)-> Option<()> {
+    let user_id = event.get("source")?.get("userId")?.as_str()?;
+    let signup_url = format!("https://{}/signup?user_id={}", SETTINGS.HOST, user_id);
+
+    let first_message = SimpleMessage::new("友達登録ありがとうございます😊/n下のボタンから出欠システムにアクセスできます！");
+
+    let mut flex = fs::read_to_string("button.json").unwrap();
+    flex = flex.replace("%SIGNUP_URL%", &signup_url);
+
+    //todo
+    //let third_message = SimpleMessage::new("iosの場合はホーム画面にアイコンを");
+
+    let second_message = FlexMessage::new(Value::from(flex), "flexメッセージ");
+    let _ = line::push_messages(
+        user_id,vec![Box::new(first_message),Box::new(second_message)]
+    );
+
+    Some(())
 }
 
 async fn insert_attendance(event: &Value) -> Option<()> {
@@ -167,22 +250,16 @@ async fn resieve_message(event: &Value) -> Option<()> {
     let text = message.get("text")?.as_str()?.to_string();
     let lines: Vec<&str> = text.lines().collect();
     let text = match *lines.first()? {
-        "休み登録" => {
-            push_exception(lines).await.get()
-        }
-        "イベント登録" => {
-            push_event(lines).await.get()
-        }
-        "使い方" => {
-            fs::read_to_string("usage.txt").unwrap()
-        }
+        "休み登録" => push_exception(lines).await.get(),
+        "イベント登録" => push_event(lines).await.get(),
+        "使い方" => fs::read_to_string("usage.txt").unwrap(),
         _ => {
             if event.get("source")?.get("type")? == "user" {
                 "「使い方」と送ると使い方が見れます".to_string()
-            }else{
+            } else {
                 return None;
             }
-        },
+        }
     };
     let author = event.get("source")?.get("userId")?.as_str()?;
     line::push_message(author, line::SimpleMessage::new(&text)).await;
@@ -258,11 +335,11 @@ async fn push_exception(args: Vec<&str>) -> Response {
 async fn push_event(args: Vec<&str>) -> Response {
     let Some(&name) = args.get(1) else {return Response::NotEnoughArgment};
     let Some(&date) = args.get(2) else {return Response::NotEnoughArgment};
-    let duration_hour:Option<i64> = args.get(3).map(|x|x.parse().ok()).unwrap_or_default();
+    let duration_hour: Option<i64> = args.get(3).map(|x| x.parse().ok()).unwrap_or_default();
     let Ok(date) = NaiveDateTime::parse_from_str(date,"%Y/%m/%d %H:%M") else {return Response::DateParseError};
     let date = date.and_local_timezone(*TIMEZONE).unwrap();
 
-    if let Some(hour) = duration_hour{
+    if let Some(hour) = duration_hour {
         let mut scheduler = SCHEDULER.get().unwrap().lock().await;
         let schedule = Schedule {
             id: name.to_string(),
@@ -280,11 +357,11 @@ async fn push_event(args: Vec<&str>) -> Response {
         scheduler.push(schedule).await;
         scheduler.save_shedule("schedule.json").await.unwrap();
         Response::Success("イベントの登録に成功しました".to_string())
-    }else{
+    } else {
         if date < Utc::now() {
             return Response::PassedDate;
         }
-        create_attendance_check(DateTime::<Utc>::from_utc(date.naive_utc(), Utc),name).await;
+        create_attendance_check(DateTime::<Utc>::from_utc(date.naive_utc(), Utc), name).await;
         Response::Success("イベントを送信しました".to_string())
     }
 }
@@ -318,7 +395,10 @@ async fn get_attendance_status(attendance_id: &str) -> Attendance {
     }
 }
 
-async fn result_page(Path(attendance_id): Path<String>) -> Html<String> {
+async fn result_page(
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Html<String>, StatusCode> {
+    let Some(attendance_id) = params.get("attendance_id") else {return Err(StatusCode::BAD_REQUEST)};
     let attendance = get_attendance_status(&attendance_id);
     let attendance_data = sqlx::query("select * from attendances where attendance_id = ?")
         .bind(&attendance_id)
@@ -381,7 +461,7 @@ async fn result_page(Path(attendance_id): Path<String>) -> Html<String> {
     html = html.replace("%HOLDINGS%", &holdings);
     html = html.replace("%ABSENTS%", &absents);
 
-    Html::from(html)
+    Ok(Html::from(html))
 }
 
 async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str) -> Schedule {
@@ -407,14 +487,14 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
 
     //出欠管理用のテーブル作成
     sqlx::query(&format!(
-        "create table {attendance_id}(user_id string,status string)"
+        "create table {attendance_id}(user_id string primary key,status string)"
     ))
     .execute(DB.get().unwrap())
     .await
     .unwrap();
 
-    //メッセージ送信
-    todo!();
+    //通知を送信
+    //todo
 
     Schedule {
         id: "".to_string(),

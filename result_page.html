@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 
 <head>
     <title>%TITLE%</title>
     <style>
-        html{
+        html {
             font-size: 1.8vw;
         }
 
@@ -27,13 +27,21 @@
         }
 
         table th {
-            font-size: 2em;
-            text-align: center;
             width: 33%;
             padding: 15px 0;
         }
 
-        .inner-block{
+        table th button {
+            width: 70%;
+            font-size: 2em;
+            text-align: center;
+            border-radius: 0.3em;
+            border: none;
+            background-color: rgba(196, 230, 213, 0.941);
+            box-shadow: 0em 0em 0.1em gray;
+        }
+
+        .inner-block {
             text-align: center;
             display: inline-block;
         }
@@ -43,7 +51,7 @@
             display: inline-block;
             width: 2em;
             height: 2em;
-            border-radius:50%;
+            border-radius: 50%;
             border: solid 4px #746063;
             background-position: center;
             margin-right: 0.5em;
@@ -56,20 +64,78 @@
             text-align: left;
             vertical-align: top;
         }
+
+        .title {
+            text-align: center;
+            font-size: 1.3em;
+            margin: 0em 0;
+        }
     </style>
+    <script>
+        function GetCookies() {
+            var result = new Array();
+
+            var allcookies = document.cookie;
+            if (allcookies != '') {
+                var cookies = allcookies.split('; ');
+
+                for (var i = 0; i < cookies.length; i++) {
+                    var cookie = cookies[i].split('=');
+
+                    // クッキーの名前をキーとして 配列に追加する
+                    result[cookie[0]] = decodeURIComponent(cookie[1]);
+                }
+            }
+            return result;
+        }
+        function post_attendance(type) {
+            let params = new URL(window.location.href).searchParams;
+            let attendance_id = params.get('attendance_id');
+
+            let Cookies = GetCookies();
+            let user_id = Cookies['user_id'];
+
+            if(user_id == null) {
+                alert('LINEから認証してください');
+                return;
+            }
+
+            var data = {
+                'user_id': user_id,
+                'attendance_id': attendance_id,
+                'request_type': type
+            };
+            var json = JSON.stringify(data);
+
+            const XHR = new XMLHttpRequest();
+            XHR.open('POST','register');
+            XHR.setRequestHeader('content-type', 'application/json');
+            XHR.addEventListener('load',function(){location.reload();});
+            XHR.send(json).then();
+
+        }
+    </script>
 </head>
 
 <body>
+    <div class="title">%TITLE%</div>
+    <hr>
     <table>
         <tr>
-            <th width="200">参加 %ATTEND%人</th>
-            <th width="200">保留 %HOLDING%人</th>
-            <th width="200">不参加 %ABSENT%人</th>
+            <th width="200"><button onclick="post_attendance('attend')">参加 %ATTEND%人</button></th>
+            <th width="200"><button onclick="post_attendance('holding')">保留 %HOLDING%人</button></th>
+            <th width="200"><button onclick="post_attendance('absent')">不参加 %ABSENT%人</button></th>
         </tr>
         <tr>
-            <td><div class="inner-block">%ATTENDS%</div></td>
-            <td><div class="inner-block">%HOLDINGS%</div></td>
-            <td><div class="inner-block">%ABSENTS%</div></td>
+            <td>
+                <div class="inner-block">%ATTENDS%</div>
+            </td>
+            <td>
+                <div class="inner-block">%HOLDINGS%</div>
+            </td>
+            <td>
+                <div class="inner-block">%ABSENTS%</div>
+            </td>
         </tr>
     </table>
 </body>

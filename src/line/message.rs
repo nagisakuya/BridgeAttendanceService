@@ -36,10 +36,10 @@ pub struct FlexMessage {
     pub json: serde_json::Value,
 }
 impl FlexMessage {
-    pub fn new(json: serde_json::Value, text: &str) -> Self {
+    pub fn new(json: serde_json::Value, alt_text: &str) -> Self {
         FlexMessage {
             type_: "flex".to_string(),
-            altText: text.to_string(),
+            altText: alt_text.to_string(),
             json,
         }
     }

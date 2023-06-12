@@ -32,7 +32,7 @@ impl Scheduler {
             timestamp,
         }
     }
-    pub async fn save_shedule(&self, path: &str) -> Result<()> {
+    pub async fn save_shedule(&self, path: &str) -> AsyncResult<()> {
         fs::write(path, serde_json::to_string(&self.schedules)?)?;
         Ok(())
     }
