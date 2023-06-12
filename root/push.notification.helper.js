@@ -71,7 +71,7 @@ function notification_test_showNotification() {
  * ブラウザのプッシュサービスに登録する
  * 条件：notification_startServiceWorkerが成功した
  */
-function notification_subscribe() {
+function notification_subscribe(success,fail) {
     const pushServerPublicKey = 'BERr1Xm5hN40diIp-Pk1mg7EKOkBAaGTurr0XWq-lPYo5_y-TaXwPIxi5R7GjaJblooHDbLttJ7HxqEXXOyA9ds';
     return navigator.serviceWorker.ready.then(
         (serviceWorker) => {
@@ -88,9 +88,11 @@ function notification_subscribe() {
                         console.log("✅ （５）登録が成功した。次の情報を使ってプッシュ通知を送れる")
                         console.log(subscription.toJSON())
                         //_showWebPushCommand(subscription.toJSON());
+                        if(success){success()};
                         return subscription;
                     },
                     (error) => {
+                        if(fail){fail()};
                         console.log("❌ （５）プッシュサービスに登録できなかった");
                         console.log(error);
                     });

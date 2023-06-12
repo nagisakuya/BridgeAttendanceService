@@ -433,7 +433,7 @@ async fn result_page(
     async fn ids_to_name(user_ids: &Vec<String>) -> String {
         let mut buf = String::default();
         for user_id in user_ids {
-            let Ok(row) = sqlx::query("select * from users where user_id=?").bind(user_id).fetch_one(DB.get().unwrap()).await else {continue;};
+            let Ok(row) = sqlx::query("select * from users where id=?").bind(user_id).fetch_one(DB.get().unwrap()).await else {continue;};
             let name:String = row.get("name");
             let picture_url:String = row.get("image");
             buf += {
@@ -550,7 +550,9 @@ async fn push_notification(title:&str,message:&str,attendance_id:Option<String>)
 
         if let Err(e) = client.send(builder.build().unwrap()).await { 
             println!("プッシュ通知の送信に失敗しました。 エラーコード:{:?} user_id:{}",e,user_id);
-         };
+        } else {
+            println!("プッシュ通知の送信に成功しました。 user_id:{}",user_id);
+        };
     }
 }
 

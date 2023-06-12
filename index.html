@@ -3,14 +3,19 @@
 
 <head>
     <title>index</title>
+    <link rel="manifest" id="my-manifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/manifest/icon-192x192.png">
     <script src="js.js"></script>
     <script src="push.notification.helper.js"></script>
+    <script src="manifest.js"></script>
     <script>
+        setManifestURL();
         signup();
-        notification_isSupported();
-        notification_askForPermission();
-        notification_startServiceWorker();
-        notification_subscribe();
+        notification_setup(()=>{
+            let button = document.querySelector('#invisible');
+            button.style.display = 'none';
+        },()=>{
+        });
     </script>
     <style>
         a {
@@ -19,10 +24,12 @@
             font-weight: bold;
             color: black;
         }
+
         body {
             text-align: center;
         }
-        .link{
+
+        .link {
             margin-top: 2vw;
             background-color: rgba(196, 230, 213, 0.941);
             border-radius: 1vw;
@@ -32,10 +39,33 @@
             margin-right: auto;
             box-shadow: 0em 0em 0.2em gray;
         }
+
+        .huge-button{
+            margin-top: 2vw;
+            background-color: red;
+            border-radius: 1vw;
+            padding: 15vw;
+            width: 80%;
+            height: 30%;
+            margin-left: auto;
+            margin-right: auto;
+            margin-bottom: 2vw;
+            box-shadow: 0em 0em 0.2em gray;
+            font-size: 6vw;
+        }
+
+        #invisible{
+            font-size: larger;
+        }
     </style>
 </head>
 
 <body>
+    <div id="invisible" style="display: block;">
+        通知を設定してください！safariユーザーの人は画面下のメニューからホーム画面に追加をすると通知を設定できるようになります。
+        <button onclick="notification_setup(()=>{window.location.reload()})" class="huge-button" id="notification-button">通知を許可する</button>
+        <hr id="line">
+    </div>
     %ATTENDANCE_CHECKS%
 </body>
 

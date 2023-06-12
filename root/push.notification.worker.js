@@ -1,4 +1,4 @@
-function receivePushNotification(event) {
+self.addEventListener("push",event=>{
   const json = event.data?.json() ?? {};
   const title = json.title || "TITLE";
   const message = json.message || "MESSAGE";
@@ -12,17 +12,19 @@ function receivePushNotification(event) {
     url = `index`;
   }
   
-
   const options = {
     data: url,
     body: message,
+    tag: "tag",
+    actions: [{
+      action:url,//この辺のoptionが必須っぽい
+      title:"open_app",
+    }]
   };
-  event.waitUntil(this.registration.showNotification(title, options));
-}
-this.addEventListener("push", receivePushNotification);
+  event.waitUntil(self.registration.showNotification(title, options));
+});
 
-function openPushNotification(event) {
+self.addEventListener("notificationclick", event =>{
   event.notification.close();
   event.waitUntil(clients.openWindow(event.notification.data));
-}
-this.addEventListener("notificationclick", openPushNotification);
+});

@@ -49,3 +49,17 @@ function signup() {
         console.log(`✅ ログインしました user_id=${user_id}`);
     }
 }
+
+function notification_setup(succeed,failed) {
+    notification_isSupported();
+    notification_startServiceWorker();
+    Notification.requestPermission(function (result) {
+        return result;
+    }).then(
+        (success) => {
+            notification_subscribe(succeed,failed);
+        },
+        (fail) => {
+            alart("プッシュ通知を許可してください");
+        });
+}
