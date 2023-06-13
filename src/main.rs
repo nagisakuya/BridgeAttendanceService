@@ -127,7 +127,7 @@ async fn index(Query(params): Query<HashMap<String, String>>) -> Result<Html<Str
         let description: String = item.get("description");
 
         let line = format!(
-            r#"<div class="link"><a href="result?attendance_id={}">{}</a></div><br>"#,
+            r#"<button class="link" onclick="location.href='result?attendance_id={}'">{}</div><br>"#,
             attendance_id, description
         );
 
@@ -187,7 +187,7 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
             Some("message") => {
                 resieve_message(event).await;
             }
-            Some("follw") => {
+            Some("follow") => {
                 let user_id = event.get("source").unwrap().get("userId").unwrap().as_str().unwrap();
                 send_follow_messages(&user_id).await;
             }
@@ -199,17 +199,17 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
 }
 
 async fn send_follow_messages(user_id:&str) {
-    let signup_url = format!(r"https://{}/index?user_id={}", SETTINGS.HOST, user_id);
+    let signup_url = format!(r"https://{}/index?user_id={}&openExternalBrowser=1", SETTINGS.HOST, user_id);
 
     let first_message = SimpleMessage::new(
-        "友達登録ありがとうございます😊\n下のボタンから出欠システムにアクセスできます！",
+        "友達登録ありがとうございます😊\n下のボタンから出欠システムに登録できます！",
     );
 
     let mut flex = fs::read_to_string("button.json").unwrap();
     flex = flex.replace("%SIGNUP_URL%", &signup_url);
     let second_message = FlexMessage::new(serde_json::from_str(&flex).unwrap(), "flexメッセージ");
 
-    let third_message = SimpleMessage::new("通知機能を使うために、iosの場合はホーム画面にアイコンを追加してね。");
+    let third_message = SimpleMessage::new("iosで通知機能を使うためには、ホーム画面にアイコンを追加してね。やり方→https://blog.thetheorier.com/entry/ios16-pwa#:~:text=%E8%A8%AD%E5%AE%9A2");
 
     line::push_messages(
         user_id,
@@ -550,8 +550,6 @@ async fn push_notification(title:&str,message:&str,attendance_id:Option<String>)
 
         if let Err(e) = client.send(builder.build().unwrap()).await { 
             println!("プッシュ通知の送信に失敗しました。 エラーコード:{:?} user_id:{}",e,user_id);
-        } else {
-            println!("プッシュ通知の送信に成功しました。 user_id:{}",user_id);
         };
     }
 }

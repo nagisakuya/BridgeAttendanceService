@@ -2,7 +2,7 @@
 <html lang="ja">
 
 <head>
-    <title>index</title>
+    <title>ブリッジ出欠</title>
     <link rel="manifest" id="my-manifest" />
     <link rel="apple-touch-icon" sizes="180x180" href="/manifest/icon-192x192.png">
     <script src="js.js"></script>
@@ -18,26 +18,21 @@
         });
     </script>
     <style>
-        a {
-            text-decoration: none;
-            font-size: 4vw;
-            font-weight: bold;
-            color: black;
-        }
-
         body {
             text-align: center;
         }
 
         .link {
-            margin-top: 2vw;
+            margin-top: 3vw;
             background-color: rgba(196, 230, 213, 0.941);
             border-radius: 1vw;
-            padding: 1vw;
-            width: 70%;
-            margin-left: auto;
-            margin-right: auto;
-            box-shadow: 0em 0em 0.2em gray;
+            padding: 2.5vw 0vw;
+            width: 80%;
+            margin: 2vw auto;
+            box-shadow: 0em 0em 0.3em gray;
+            font-size: 4vw;
+            font-weight: bold;
+            color: black;
         }
 
         .huge-button{
@@ -52,17 +47,18 @@
             margin-bottom: 2vw;
             box-shadow: 0em 0em 0.2em gray;
             font-size: 6vw;
+            font-weight: bold;
         }
 
         #invisible{
-            font-size: larger;
+            font-size: 4.8vw;
         }
     </style>
 </head>
 
 <body>
     <div id="invisible" style="display: block;">
-        通知を設定してください！safariユーザーの人は画面下のメニューからホーム画面に追加をすると通知を設定できるようになります。
+        通知を設定してください！safariユーザーの人は画面下のメニューからホーム画面に追加をすると通知を設定できるようになります。<br>
         <button onclick="notification_setup(()=>{window.location.reload()})" class="huge-button" id="notification-button">通知を許可する</button>
         <hr id="line">
     </div>

@@ -9,11 +9,11 @@
         "type": "button",
         "action": {
           "type": "uri",
-          "label": "出欠システム",
+          "label": "登録",
           "uri": "%SIGNUP_URL%"
         },
         "color": "#23c446",
-        "style": "link",
+        "style": "secondary",
         "margin": "none"
       }
     ]
