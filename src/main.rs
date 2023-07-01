@@ -510,7 +510,7 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
     .unwrap();
 
     //通知を送信
-    push_attendance_notification(&attendance_id).await;
+    push_attendance_notifications(&attendance_id).await;
 
     Schedule {
         id: "".to_string(),
@@ -521,7 +521,7 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
     }
 }
 
-async fn push_attendance_notification(attendance_id: &str) {
+async fn push_attendance_notifications(attendance_id: &str) {
     let quote = get_random_quote().await;
 
     let row = sqlx::query("select * from attendances where attendance_id = ?")
@@ -531,14 +531,10 @@ async fn push_attendance_notification(attendance_id: &str) {
         .unwrap();
     let title: String = row.get("description");
 
-    push_notification(&title, &quote, Some(attendance_id.to_string())).await;
+    push_notifications(&title, &quote, Some(attendance_id.to_string())).await;
 }
 
-async fn push_cancel_notification(title: &str, reason: &str) {
-    push_notification(title, reason, None).await;
-}
-
-async fn push_notification(title: &str, message: &str, attendance_id: Option<String>) {
+async fn push_notifications(title: &str, message: &str, attendance_id: Option<String>) {
     use web_push::*;
 
     let notification_list = sqlx::query("select * from notification")

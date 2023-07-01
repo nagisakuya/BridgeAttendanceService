@@ -32,14 +32,15 @@ impl Todo {
                 let attendance = get_attendance_status(attendance_id).await.unwrap();
                 let attend = attendance.attend.len();
                 if attend < 4 {
-                    for user_id in attendance.attend {
+                    for user_id in attendance.attend.iter().chain(attendance.absent.iter()).chain(attendance.holding.iter()) {
                         let message = line::SimpleMessage::new("今のところ卓が立たなさそうです！！！やばいです！！！");
                         line::push_message(&user_id,message).await;
                     }
+                    push_notifications("卓が立たなそうです！！！！", "あわわわわわ。。。。。。",Some(attendance_id.clone())).await;
                 }
             }
             Self::SendMessage {contents} =>{
-                push_cancel_notification("今日の練習会は休みです", &format!("理由:{contents}")).await;
+                push_notifications("今日の練習会は休みです", &format!("理由:{contents}"),None).await;
             }
             Self::Nothing => {}
         }
