@@ -43,7 +43,8 @@ table th button {
     display: inline-block;
 }
 
-.icon {
+
+.user_icon {
     vertical-align: middle;
     display: inline-block;
     width: 2em;
@@ -64,6 +65,29 @@ table th button {
 
 .title {
     text-align: center;
-    font-size: 4em;
+    font-size: 7vw;
     margin: 0em 0;
+}
+
+.title_box {
+    vertical-align: middle;
+}
+
+.icon {
+    width: 7vw;
+    height: 7vw;
+    vertical-align: middle;
+    margin: 1.7vw 1vw;
+}
+
+.back {
+    position: absolute;
+    top:0vw;
+    left:0vw;
+}
+
+.left_iconbox{
+    position: absolute;
+    top:0vw;
+    right:0vw;
 }

@@ -458,7 +458,7 @@ async fn result_page(
             let name: String = row.get("name");
             let picture_url: String = row.get("image");
             buf += {
-                let icon = format!(r####"<img src="{picture_url}" alt="icon" class="icon">"####);
+                let icon = format!(r####"<img src="{picture_url}" alt="icon" class="user_icon">"####);
                 &format!(r##"<div class="box">{}{}</div><br>"##, icon, name)
             };
         }

@@ -3,6 +3,14 @@
 
 <head>
     <title>%TITLE%</title>
+    <script src="clipboard/clipboard.min.js"></script>
+    <script>
+        window.onload = () => {
+            let link_button = document.getElementById('link');
+            link_button.setAttribute("data-clipboard-text", location.toString());
+            new ClipboardJS('#link');
+        }
+    </script>
     <link rel="stylesheet" href="result_page.css">
     <script src="js.js"></script>
     <script>
@@ -11,13 +19,26 @@
 </head>
 
 <body>
-    <div class="title">%TITLE%</div>
+    <div class="title_box">
+        <img class="icon back" src="icons/back.png" style="float: left;" alt="back" onclick='location.href="index"'>
+        <div class="title">
+            %TITLE%
+        </div>
+        <div class="left_iconbox">
+            <img class="icon" id="link" src="icons/link.png" style="float: left;" alt="link" data-clipboard-text="">
+            <img class="icon reload" src="icons/reload.png" style="float: left;" alt="reload"
+                onclick="location.reload();">
+        </div>
+    </div>
     <hr>
     <table>
         <tr>
-            <th width="200"><button onclick="post_attendance('attend',function(){location.reload();})">参加 %ATTEND%人</button></th>
-            <th width="200"><button onclick="post_attendance('holding',function(){location.reload();})">保留 %HOLDING%人</button></th>
-            <th width="200"><button onclick="post_attendance('absent',function(){location.reload();})">不参加 %ABSENT%人</button></th>
+            <th width="200"><button onclick="post_attendance('attend',function(){location.reload();})">参加
+                    %ATTEND%人</button></th>
+            <th width="200"><button onclick="post_attendance('holding',function(){location.reload();})">保留
+                    %HOLDING%人</button></th>
+            <th width="200"><button onclick="post_attendance('absent',function(){location.reload();})">不参加
+                    %ABSENT%人</button></th>
         </tr>
         <tr>
             <td>
