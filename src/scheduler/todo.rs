@@ -6,7 +6,7 @@ pub enum Todo {
         hour: i64,
     },
     SendAttendanceInfo {
-        attendance_id: String,
+        attendance_id: u32,
     },
     Test,
     SendMessage {
@@ -27,14 +27,14 @@ impl Todo {
             Self::SendAttendanceInfo {
                 attendance_id,
             } => {
-                let attendance = get_attendance_status(attendance_id).await.unwrap();
+                let attendance = get_attendance_status(attendance_id).await;
                 let attend = attendance.attend.len();
                 if attend < 4 {
                     for user_id in attendance.attend.iter().chain(attendance.absent.iter()).chain(attendance.holding.iter()) {
                         let message = line::SimpleMessage::new("今のところ卓が立たなさそうです！！！やばいです！！！");
                         line::push_message(&user_id,message).await;
                     }
-                    push_notifications("卓が立たなそうです！！！！", "あわわわわわ。。。。。。",Some(attendance_id.clone())).await;
+                    push_notifications("卓が立たなそうです！！！！", "あわわわわわ。。。。。。",Some(attendance_id.to_string())).await;
                 }
             }
             Self::SendMessage {contents} =>{

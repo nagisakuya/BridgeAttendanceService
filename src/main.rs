@@ -84,8 +84,8 @@ async fn main() -> AsyncResult<()> {
     let shedule_check = async {
         loop {
             let schedules = SCHEDULER.get().unwrap().lock().await.get_schedules().await;
-            for (schedule,fired_time) in schedules{
-                println!("イベント発火:{:?}",schedule);
+            for (schedule, fired_time) in schedules {
+                println!("イベント発火:{:?}", schedule);
                 schedule.todo.excute(&schedule.id, fired_time).await;
             }
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -124,13 +124,13 @@ async fn index(Query(params): Query<HashMap<String, String>>) -> Result<Html<Str
     let mut html = fs::read_to_string("index.html").unwrap();
 
     let mut buf = String::new();
-    let attendance_checks = sqlx::query("select * from attendances")
+    let attendance_checks = sqlx::query("select * from attendance_checks")
         .fetch_all(DB.get().unwrap())
         .await
         .unwrap();
 
     for item in attendance_checks.iter().rev() {
-        let attendance_id: String = item.get("attendance_id");
+        let attendance_id: u32 = item.get("attendance_id");
         let description: String = item.get("description");
 
         let line = format!(
@@ -154,17 +154,22 @@ async fn register(body: Bytes) -> StatusCode {
     let Some(Some(user_id)) = json.get("user_id").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
     let Some(Some(request_type)) = json.get("request_type").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
 
+    let Ok(attendance_id):Result<u32,_> = attendance_id.parse() else { return StatusCode::BAD_REQUEST };
+
     if request_type != "attend" && request_type != "holding" && request_type != "absent" {
         return StatusCode::BAD_REQUEST;
     }
 
-    if let Err(_) = sqlx::query(&format!(
-        "replace into {attendance_id} (user_id, status) values (?, '{request_type}')",
+    if let Err(e) = sqlx::query(&format!(
+        "replace into attendances(attendance_id,user_id, status) values (?,?,?)",
     ))
+    .bind(attendance_id)
     .bind(user_id)
+    .bind(request_type)
     .execute(DB.get().unwrap())
     .await
     {
+        println!("{e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     };
 
@@ -243,12 +248,14 @@ async fn resieve_message(event: &Value) -> Option<()> {
     //let reply_token = event.get("replyToken")?.as_str()?;
     let author = event.get("source")?.get("userId")?.as_str()?;
     let from = event.get("source")?.get("type")?.as_str()?;
-    if from != "user" { return None }
+    if from != "user" {
+        return None;
+    }
 
     let text = message.get("text")?.as_str()?.to_string();
     let lines: Vec<&str> = text.lines().collect();
     println!("メッセージを受信:{}", event);
-    
+
     let text = match *lines.first()? {
         "休み登録" => push_exception(lines).await.get(),
         "イベント登録" => push_event(lines).await.get(),
@@ -369,25 +376,40 @@ struct Attendance {
     holding: Vec<String>,
     absent: Vec<String>,
 }
-async fn get_attendance_status(attendance_id: &str) -> AsyncResult<Attendance> {
-    let query = &format!("select * from {attendance_id} where status = ?");
-    let attend: Vec<String> = sqlx::query_scalar(query)
+async fn get_attendance_status(attendance_id: &u32) -> Attendance {
+    let query = &format!("select user_id from attendances where attendance_id = ? and status = ?");
+    let attend: Vec<String> = sqlx::query(query)
+        .bind(attendance_id)
         .bind("attend")
         .fetch_all(DB.get().unwrap())
-        .await?;
-    let holding: Vec<String> = sqlx::query_scalar(query)
+        .await
+        .unwrap()
+        .iter()
+        .map(|i| i.get("user_id"))
+        .collect();
+    let holding: Vec<String> = sqlx::query(query)
+        .bind(attendance_id)
         .bind("holding")
         .fetch_all(DB.get().unwrap())
-        .await?;
-    let absent: Vec<String> = sqlx::query_scalar(query)
+        .await
+        .unwrap()
+        .iter()
+        .map(|i| i.get("user_id"))
+        .collect();
+    let absent: Vec<String> = sqlx::query(query)
+        .bind(attendance_id)
         .bind("absent")
         .fetch_all(DB.get().unwrap())
-        .await?;
-    Ok(Attendance {
+        .await
+        .unwrap()
+        .iter()
+        .map(|i| i.get("user_id"))
+        .collect();
+    Attendance {
         attend,
         holding,
         absent,
-    })
+    }
 }
 
 async fn result_page(
@@ -396,23 +418,23 @@ async fn result_page(
     if let Some(user_id) = params.get("user_id") {
         signup(user_id).await
     };
-    let Some(attendance_id) = params.get("attendance_id") else {return Err(StatusCode::BAD_REQUEST)};
+    let Some(Ok(attendance_id)) = params.get("attendance_id").map(|i|i.parse()) else {return Err(StatusCode::BAD_REQUEST)};
     let attendance = get_attendance_status(&attendance_id);
-    let attendance_data = sqlx::query("select * from attendances where attendance_id = ?")
+    let attendance_data = sqlx::query("select * from attendance_checks where attendance_id = ?")
         .bind(&attendance_id)
         .fetch_one(DB.get().unwrap());
 
     let (attendance, attendance_data) = tokio::join!(attendance, attendance_data);
 
-    let Ok(Attendance {
+    let Attendance {
         attend,
         holding,
         absent,
-    }) = attendance else{
-        return Err(StatusCode::BAD_REQUEST)
-    };
+    } = attendance;
 
-    let attendance_data = attendance_data.unwrap();
+    let Ok(attendance_data) = attendance_data else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
 
     let title: String = attendance_data.get("description");
 
@@ -429,7 +451,8 @@ async fn result_page(
             let name: String = row.get("name");
             let picture_url: String = row.get("image");
             buf += {
-                let icon = format!(r####"<img src="{picture_url}" alt="icon" class="user_icon">"####);
+                let icon =
+                    format!(r####"<img src="{picture_url}" alt="icon" class="user_icon">"####);
                 &format!(r##"<div class="box">{}{}</div><br>"##, icon, name)
             };
         }
@@ -449,10 +472,6 @@ async fn result_page(
 }
 
 async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str) {
-    //ランダムid生成
-    use rand::Rng;
-    let attendance_id = "attendance".to_owned() + &rand::thread_rng().gen::<u64>().to_string();
-
     let text = format!(
         "{}/{}({}){}",
         finishing_time.month(),
@@ -461,31 +480,29 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
         event_name
     );
 
+    let lock = DB.get().expect("DBの取得に失敗しました");
     //sqlに登録
-    sqlx::query(
-        "insert into attendances(description,finishing_schedule,attendance_id) values(?,?,?)",
-    )
-    .bind(&text)
-    .bind(finishing_time)
-    .bind(&attendance_id)
-    .execute(DB.get().expect("DBの取得に失敗しました"))
-    .await
-    .expect("attendancesテーブルへの書き込みに失敗しました");
+    sqlx::query("insert into attendance_checks(description,finishing_schedule) values(?,?)")
+        .bind(&text)
+        .bind(finishing_time)
+        .execute(lock)
+        .await
+        .expect("attendance_checksテーブルへの書き込みに失敗しました");
 
-    //出欠管理用のテーブル作成
-    sqlx::query(&format!(
-        "create table {attendance_id}(user_id string primary key,status string)"
-    ))
-    .execute(DB.get().expect("DBの取得に失敗しました"))
-    .await
-    .expect("attendanceテーブルの作成に失敗しました");
+    let attendance_id: u32 = sqlx::query("select * from attendance_checks limit 1")
+        .fetch_one(lock)
+        .await
+        .unwrap()
+        .get("attendance_id");
 
     let schedule = Schedule {
         id: "".to_string(),
         schedule_type: ScheduleType::OneTime {
             datetime: finishing_time,
         },
-        todo: Todo::SendAttendanceInfo { attendance_id:attendance_id.clone() },
+        todo: Todo::SendAttendanceInfo {
+            attendance_id: attendance_id.clone(),
+        },
     };
     SCHEDULER.get().unwrap().lock().await.push(schedule).await;
 
@@ -493,14 +510,16 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
     push_attendance_notifications(&attendance_id).await;
 }
 
-async fn push_attendance_notifications(attendance_id: &str) {
+async fn push_attendance_notifications(attendance_id: &u32) {
     let quote = get_random_quote().await;
 
-    let row = sqlx::query("select * from attendances where attendance_id = ?")
-        .bind(&attendance_id)
-        .fetch_one(DB.get().unwrap())
-        .await
-        .unwrap();
+    let row = sqlx::query(&format!(
+        "select * from attendance_checks where attendance_id = ?"
+    ))
+    .bind(attendance_id)
+    .fetch_one(DB.get().unwrap())
+    .await
+    .unwrap();
     let title: String = row.get("description");
 
     push_notifications(&title, &quote, Some(attendance_id.to_string())).await;
@@ -528,9 +547,14 @@ async fn push_notifications(title: &str, message: &str, attendance_id: Option<St
         }};
         let content = json.to_string().as_bytes().to_owned();
 
-        match push_notification_at(endpoint,key,auth,&content).await {
+        match push_notification_at(endpoint, key, auth, &content).await {
             Ok(()) => (),
-            Err(e) => {println!("プッシュ通知の送信に失敗しました。userid={} err={}",user_id,e)},
+            Err(e) => {
+                println!(
+                    "プッシュ通知の送信に失敗しました。userid={} err={}",
+                    user_id, e
+                )
+            }
         }
     }
 
