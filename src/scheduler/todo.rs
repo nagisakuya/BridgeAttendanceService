@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use super::*;
 
 #[derive(Debug, Serialize, Deserialize ,Clone)]
@@ -30,8 +31,9 @@ impl Todo {
                 let attendance = get_attendance_status(attendance_id).await;
                 let attend = attendance.attend.len();
                 if attend < 4 {
-                    for user_id in attendance.attend.iter().chain(attendance.absent.iter()).chain(attendance.holding.iter()) {
-                        let message = line::SimpleMessage::new("今のところ卓が立たなさそうです！！！やばいです！！！");
+                    let masters:Vec<String> = sqlx::query_scalar("select * from masters").fetch_all(DB.get().unwrap()).await.unwrap();
+                    for user_id in attendance.attend.iter().chain(attendance.absent.iter()).chain(attendance.holding.iter()).chain(masters.iter()).unique() {
+                        let message = line::SimpleMessage::new("今日の練習会、今のところ卓が立たなさそうです！！！やばいです！！！");
                         line::push_message(&user_id,message).await;
                     }
                     push_notifications("卓が立たなそうです！！！！", "あわわわわわ。。。。。。",Some(attendance_id.to_string())).await;
