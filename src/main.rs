@@ -83,7 +83,11 @@ async fn main() -> AsyncResult<()> {
 
     let shedule_check = async {
         loop {
-            SCHEDULER.get().unwrap().lock().await.check().await;
+            let schedules = SCHEDULER.get().unwrap().lock().await.get_schedules().await;
+            for (schedule,fired_time) in schedules{
+                println!("イベント発火:{:?}",schedule);
+                schedule.todo.excute(&schedule.id, fired_time).await;
+            }
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     };
@@ -143,7 +147,7 @@ async fn index(Query(params): Query<HashMap<String, String>>) -> Result<Html<Str
 
 async fn register(body: Bytes) -> StatusCode {
     let Ok(body) = String::from_utf8(body.to_vec()) else { return StatusCode::BAD_REQUEST };
-    println!("{}", body);
+    println!("REGISTRATION:{}", body);
     let Ok(json):Result<Value,_> = serde_json::from_str(&body) else { return StatusCode::BAD_REQUEST };
 
     let Some(Some(attendance_id)) = json.get("attendance_id").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };
@@ -172,7 +176,6 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
         Ok(x) => x,
         Err(_) => return StatusCode::BAD_REQUEST,
     };
-    println!("{}", body);
     let json: Value = match serde_json::from_str(&body) {
         Ok(x) => x,
         Err(_) => return StatusCode::BAD_REQUEST,
@@ -184,13 +187,11 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
     for event in events {
         let event_type = event.get("type").map(|f| f.as_str().unwrap_or_default());
         match event_type {
-            Some("postback") => {
-                insert_attendance(event).await;
-            }
             Some("message") => {
                 resieve_message(event).await;
             }
             Some("follow") => {
+                println!("FOLLOW:{}", body);
                 let user_id = event
                     .get("source")
                     .unwrap()
@@ -234,39 +235,6 @@ async fn send_follow_messages(user_id: &str) {
     .await;
 }
 
-async fn insert_attendance(event: &Value) -> Option<()> {
-    let data = event.get("postback")?.get("data")?.as_str()?;
-    let datas: Vec<_> = data.split(',').collect();
-    let attendance_id = datas[0];
-    let status = datas[1];
-    let user_id = event.get("source")?.get("userId")?.as_str()?;
-
-    let result = sqlx::query(&format!("select * from {attendance_id} where user_id=?"))
-        .bind(user_id)
-        .fetch_one(DB.get().unwrap())
-        .await;
-    if result.is_ok() {
-        sqlx::query(&format!(
-            "update {attendance_id} set status=? where user_id=?"
-        ))
-        .bind(status)
-        .bind(user_id)
-        .execute(DB.get().unwrap())
-        .await
-        .unwrap();
-    } else {
-        sqlx::query(&format!(
-            "insert into {attendance_id}(user_id,status) values(?,?)"
-        ))
-        .bind(user_id)
-        .bind(status)
-        .execute(DB.get().unwrap())
-        .await
-        .unwrap();
-    }
-    Some(())
-}
-
 async fn resieve_message(event: &Value) -> Option<()> {
     let message: &Value = event.get("message")?;
     if message.get("type")? != "text" {
@@ -274,9 +242,13 @@ async fn resieve_message(event: &Value) -> Option<()> {
     }
     //let reply_token = event.get("replyToken")?.as_str()?;
     let author = event.get("source")?.get("userId")?.as_str()?;
+    let from = event.get("source")?.get("type")?.as_str()?;
+    if from != "user" { return None }
 
     let text = message.get("text")?.as_str()?.to_string();
     let lines: Vec<&str> = text.lines().collect();
+    println!("メッセージを受信:{}", event);
+    
     let text = match *lines.first()? {
         "休み登録" => push_exception(lines).await.get(),
         "イベント登録" => push_event(lines).await.get(),
@@ -367,7 +339,6 @@ async fn push_event(args: Vec<&str>) -> LineResponse {
     let date = date.and_local_timezone(*TIMEZONE).unwrap();
 
     if let Some(hour) = duration_hour {
-        let mut scheduler = SCHEDULER.get().unwrap().lock().await;
         let schedule = Schedule {
             id: name.to_string(),
             schedule_type: ScheduleType::OneTime {
@@ -381,8 +352,8 @@ async fn push_event(args: Vec<&str>) -> LineResponse {
             },
             todo: Todo::CreateAttendanceCheck { hour: hour },
         };
+        let mut scheduler = SCHEDULER.get().unwrap().lock().await;
         scheduler.push(schedule).await;
-        scheduler.save_shedule("schedule.json").await.unwrap();
         LineResponse::Success("イベントの登録に成功しました".to_string())
     } else {
         if date < Utc::now() {
@@ -477,7 +448,7 @@ async fn result_page(
     Ok(Html::from(html))
 }
 
-async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str) -> Schedule {
+async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str) {
     //ランダムid生成
     use rand::Rng;
     let attendance_id = "attendance".to_owned() + &rand::thread_rng().gen::<u64>().to_string();
@@ -497,28 +468,29 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
     .bind(&text)
     .bind(finishing_time)
     .bind(&attendance_id)
-    .execute(DB.get().unwrap())
+    .execute(DB.get().expect("DBの取得に失敗しました"))
     .await
-    .unwrap();
+    .expect("attendancesテーブルへの書き込みに失敗しました");
 
     //出欠管理用のテーブル作成
     sqlx::query(&format!(
         "create table {attendance_id}(user_id string primary key,status string)"
     ))
-    .execute(DB.get().unwrap())
+    .execute(DB.get().expect("DBの取得に失敗しました"))
     .await
-    .unwrap();
+    .expect("attendanceテーブルの作成に失敗しました");
 
-    //通知を送信
-    push_attendance_notifications(&attendance_id).await;
-
-    Schedule {
+    let schedule = Schedule {
         id: "".to_string(),
         schedule_type: ScheduleType::OneTime {
             datetime: finishing_time,
         },
-        todo: Todo::SendAttendanceInfo { attendance_id },
-    }
+        todo: Todo::SendAttendanceInfo { attendance_id:attendance_id.clone() },
+    };
+    SCHEDULER.get().unwrap().lock().await.push(schedule).await;
+
+    //通知を送信
+    push_attendance_notifications(&attendance_id).await;
 }
 
 async fn push_attendance_notifications(attendance_id: &str) {
@@ -556,8 +528,10 @@ async fn push_notifications(title: &str, message: &str, attendance_id: Option<St
         }};
         let content = json.to_string().as_bytes().to_owned();
 
-        push_notification_at(endpoint,key,auth,&content).await
-        .unwrap_or_else(|e|{println!("プッシュ通知の送信に失敗しました。userid={} err={}",user_id,e)});
+        match push_notification_at(endpoint,key,auth,&content).await {
+            Ok(()) => (),
+            Err(e) => {println!("プッシュ通知の送信に失敗しました。userid={} err={}",user_id,e)},
+        }
     }
 
     async fn push_notification_at(
@@ -605,7 +579,7 @@ async fn get_random_quote() -> String {
 
 async fn subscribe(body: Bytes) -> StatusCode {
     let Ok(body) = String::from_utf8(body.to_vec()) else { return StatusCode::BAD_REQUEST };
-    println!("{}", body);
+    println!("SUBSCRIBE:{}", body);
     let Ok(json):Result<Value,_> = serde_json::from_str(&body) else { return StatusCode::BAD_REQUEST };
 
     let Some(Some(user_id)) = json.get("user_id").map(|i|i.as_str()) else { return StatusCode::BAD_REQUEST };

@@ -36,24 +36,22 @@ impl Scheduler {
         fs::write(path, serde_json::to_string(&self.schedules)?)?;
         Ok(())
     }
-    pub async fn check(&mut self) {
+    pub async fn get_schedules(&mut self) -> Vec<(Schedule,DateTime<Utc>)> {
         let last = self.timestamp;
         let now = Utc::now();
-        let sql_result = sqlx::query("update systemdata set timestamp=?")
+        sqlx::query("update systemdata set timestamp=?")
             .bind(now)
             .execute(DB.get().unwrap())
-            .await;
-        if sql_result.is_err() {
-            return;
-        }
+            .await.unwrap();
         self.timestamp = now;
 
-        if Schedule::check_schedules(&mut self.schedules, &last, &now).await > 0 {
-            self.save_shedule("schedule.json").await.unwrap();
-        }
+        let schedules = Schedule::check_schedules(&mut self.schedules, &last, &now).await;
+        self.save_shedule("schedule.json").await.unwrap();
+        schedules
     }
     pub async fn push(&mut self, schedule: Schedule) {
-        self.schedules.push(schedule)
+        self.schedules.push(schedule);
+        self.save_shedule("schedule.json").await.unwrap();
     }
     pub fn get(&self, name: &str) -> Option<&Schedule> {
         self.schedules.iter().find(|i| i.id == name)
@@ -109,7 +107,7 @@ async fn scheduler_test() {
         .await;
     let shedule_check = async {
         loop {
-            scheduler.check().await;
+            scheduler.get_schedules().await;
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     };

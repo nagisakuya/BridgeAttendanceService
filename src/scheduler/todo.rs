@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize ,Clone)]
 pub enum Todo {
     CreateAttendanceCheck {
         hour: i64,
@@ -16,12 +16,10 @@ pub enum Todo {
 }
 
 impl Todo {
-    pub async fn excute(&self, schedule_id:&str ,time:DateTime<Utc>) -> Option<Schedule> {
+    pub async fn excute(&self, schedule_id:&str ,time:DateTime<Utc>) {
         match self {
             Self::CreateAttendanceCheck { hour } => {
-                let schedule =
-                    create_attendance_check(time + Duration::hours(*hour) ,schedule_id).await;
-                return Some(schedule);
+                create_attendance_check(time + Duration::hours(*hour) ,schedule_id).await;
             }
             Self::Test => {
                 println!("called!!!")
@@ -44,6 +42,5 @@ impl Todo {
             }
             Self::Nothing => {}
         }
-        None
     }
 }

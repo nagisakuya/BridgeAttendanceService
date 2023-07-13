@@ -19,7 +19,7 @@ impl BloadcastMessage {
         )
         .await;
         if result.is_err() {
-            println!("{:?}", result.unwrap().text().await);
+            println!("メッセージ送信失敗:{:?}", result.unwrap().text().await);
         }
     }
 }
@@ -31,14 +31,14 @@ pub struct PushMessage {
 }
 impl PushMessage {
     pub async fn send(&self) {
-        println!("{}", serde_json::to_string(self).unwrap());
+        println!("メッセージを送信:{}", serde_json::to_string(self).unwrap());
         let responce = send_post_request(
             "https://api.line.me/v2/bot/message/push",
             &serde_json::to_string(self).unwrap(),
         )
         .await;
         if responce.is_err() {
-            println!("{:?}", responce);
+            println!("メッセージ送信失敗:{:?}", responce);
         }
     }
 }
