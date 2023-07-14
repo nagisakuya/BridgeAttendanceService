@@ -489,7 +489,7 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
         .await
         .expect("attendance_checksテーブルへの書き込みに失敗しました");
 
-    let attendance_id: u32 = sqlx::query("select * from attendance_checks limit 1")
+    let attendance_id: u32 = sqlx::query("select * from attendance_checks order by attendance_id desc limit 1")
         .fetch_one(lock)
         .await
         .unwrap()
@@ -548,7 +548,7 @@ async fn push_notifications(title: &str, message: &str, attendance_id: Option<St
         let content = json.to_string().as_bytes().to_owned();
 
         match push_notification_at(endpoint, key, auth, &content).await {
-            Ok(()) => (),
+            Ok(()) => println!("プッシュ通知を送信しました。userid={}", user_id),
             Err(e) => {
                 println!(
                     "プッシュ通知の送信に失敗しました。userid={} err={}",
