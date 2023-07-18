@@ -143,6 +143,16 @@ async fn register(body: Bytes) -> StatusCode {
     }
 }
 
+async fn insert_attendance(event: &Value) -> Option<()> {
+    let data = event.get("postback")?.get("data")?.as_str()?;
+    let datas: Vec<_> = data.split(',').collect();
+    let attendance_id = datas[0].parse().ok()?;
+    let request_type = datas[1];
+    let user_id = event.get("source")?.get("userId")?.as_str()?;
+
+    push_attendance_to_db(&attendance_id,user_id,request_type).await.ok()
+}
+
 async fn push_attendance_to_db(
     attendance_id: &u32,
     user_id: &str,
@@ -177,6 +187,9 @@ async fn resieve_webhook(body: Bytes) -> StatusCode {
         match event_type {
             Some("message") => {
                 resieve_message(event).await;
+            }
+            Some("postback") => {
+                insert_attendance(event).await;
             }
             Some("follow") => {
                 println!("FOLLOW:{}", body);
