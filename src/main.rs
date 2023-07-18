@@ -103,14 +103,15 @@ async fn main() -> AsyncResult<()> {
     Ok(())
 }
 
-async fn signup(user_id: &str) {
+
+async fn signup(user_id: &str) -> Option<line::UserProfile> {
     let Some(profile) = line::get_user_profile_from_friend(user_id.to_string()).await else {
-        return;
+        return None;
     };
 
     sqlx::query(&format!("replace into users(id,name,image) values(?,?,?)"))
         .bind(&profile.userId)
-        .bind(profile.displayName)
+        .bind(&profile.displayName)
         .bind(
             profile
                 .pictureUrl
@@ -120,6 +121,8 @@ async fn signup(user_id: &str) {
         .execute(DB.get().unwrap())
         .await
         .unwrap();
+
+    Some(profile)
 }
 
 async fn register(body: Bytes) -> StatusCode {
