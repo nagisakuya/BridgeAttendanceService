@@ -1,21 +1,65 @@
 {
   "type": "bubble",
-  "size": "micro",
+  "size": "mega",
   "body": {
     "type": "box",
     "layout": "vertical",
     "contents": [
       {
+        "type": "text",
+        "text": "%DESCRIPTION%",
+        "weight": "bold",
+        "size": "xl"
+      }
+    ]
+  },
+  "footer": {
+    "type": "box",
+    "layout": "vertical",
+    "spacing": "sm",
+    "contents": [
+      {
+        "type": "box",
+        "layout": "horizontal",
+        "contents": [
+          {
+            "type": "button",
+            "action": {
+              "type": "postback",
+              "label": "出席",
+              "data": "%ID%,attend"
+            },
+            "color": "#1bc718"
+          },
+          {
+            "type": "button",
+            "action": {
+              "type": "postback",
+              "label": "保留",
+              "data": "%ID%,holding"
+            },
+            "color": "#65c2c2"
+          },
+          {
+            "type": "button",
+            "action": {
+              "type": "postback",
+              "label": "不参加",
+              "data": "%ID%,absent"
+            }
+          }
+        ]
+      },
+      {
         "type": "button",
         "action": {
           "type": "uri",
-          "label": "%DESCRIPTION%",
+          "label": "結果",
           "uri": "https://%HOST%/result?attendance_id=%ID%"
         },
-        "color": "#222d7a",
-        "style": "link",
-        "margin": "none"
+        "color": "#1c1a1b"
       }
-    ]
+    ],
+    "flex": 0
   }
 }
