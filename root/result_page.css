@@ -91,3 +91,8 @@ table th button {
     top:0vw;
     right:0vw;
 }
+
+.header{
+    font-size: 5vw;
+    font-weight: normal;
+}
