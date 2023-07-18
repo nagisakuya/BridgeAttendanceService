@@ -105,9 +105,11 @@ async fn main() -> AsyncResult<()> {
 
 
 async fn signup(user_id: &str) -> Option<line::UserProfile> {
-    let Some(profile) = line::get_user_profile_from_friend(user_id.to_string()).await else {
-        return None;
-    };
+    let profile = if let Some(ref group_id) = SETTINGS.BINDED_GROUP_ID{
+        line::get_user_profile_from_group(user_id.to_string(), group_id.to_string()).await
+    }else{
+        line::get_user_profile_from_friend(user_id.to_string()).await
+    }?;
 
     sqlx::query(&format!("replace into users(id,name,image) values(?,?,?)"))
         .bind(&profile.userId)
