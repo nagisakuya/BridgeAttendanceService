@@ -137,13 +137,17 @@ async fn register(body: Bytes) -> StatusCode {
         return StatusCode::BAD_REQUEST;
     }
 
-    match push_attendance_to_db(&attendance_id,user_id,request_type).await {
-        Ok(_) => {StatusCode::OK},
-        Err(_) => {StatusCode::INTERNAL_SERVER_ERROR},
+    match push_attendance_to_db(&attendance_id, user_id, request_type).await {
+        Ok(_) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
-async fn push_attendance_to_db(attendance_id: &u32,user_id: &str,request_type:&str) -> AsyncResult<()>{
+async fn push_attendance_to_db(
+    attendance_id: &u32,
+    user_id: &str,
+    request_type: &str,
+) -> AsyncResult<()> {
     sqlx::query(&format!(
         "replace into attendances(attendance_id,user_id, status) values (?,?,?)",
     ))
@@ -319,35 +323,45 @@ async fn push_exception(args: Vec<&str>) -> LineResponse {
 
 async fn push_event(args: Vec<&str>) -> LineResponse {
     let Some(&name) = args.get(1) else {return LineResponse::NotEnoughArgment};
-    let Some(&date) = args.get(2) else {return LineResponse::NotEnoughArgment};
+    //日時指定が無い場合送信
+    let Some(date) = args.get(2) else{
+        create_attendance_check(None, name).await;
+        return LineResponse::Success("イベントを送信しました".to_string())
+    };
+
     let duration_hour: Option<i64> = args.get(3).map(|x| x.parse().ok()).unwrap_or_default();
     let Ok(date) = NaiveDateTime::parse_from_str(date,"%Y/%m/%d %H:%M") else {return LineResponse::DateParseError};
     let date = date.and_local_timezone(*TIMEZONE).unwrap();
 
-    if let Some(hour) = duration_hour {
-        let schedule = Schedule {
-            id: name.to_string(),
-            schedule_type: ScheduleType::OneTime {
-                datetime: {
-                    let send = date - Duration::hours(hour);
-                    if send < Utc::now() {
-                        return LineResponse::PassedDate;
-                    }
-                    DateTime::<Utc>::from_utc(send.naive_utc(), Utc)
-                },
-            },
-            todo: Todo::CreateAttendanceCheck { hour: hour },
-        };
-        let mut scheduler = SCHEDULER.get().unwrap().lock().await;
-        scheduler.push(schedule).await;
-        LineResponse::Success("イベントの登録に成功しました".to_string())
-    } else {
-        if date < Utc::now() {
-            return LineResponse::PassedDate;
-        }
-        create_attendance_check(DateTime::<Utc>::from_utc(date.naive_utc(), Utc), name).await;
-        LineResponse::Success("イベントを送信しました".to_string())
+    //過去の日付なら削除
+    if date < Utc::now() {
+        return LineResponse::PassedDate;
     }
+
+    //時間指定が無い場合送信するだけ
+    let Some(hour) = duration_hour else {
+            create_attendance_check(Some(DateTime::<Utc>::from_utc(date.naive_utc(), Utc)), name).await;
+            return LineResponse::Success("イベントを送信しました".to_string());
+        };
+
+    //時間指定されている場合スケジュールに登録
+    let schedule = Schedule {
+        id: name.to_string(),
+        schedule_type: ScheduleType::OneTime {
+            datetime: {
+                let send = date - Duration::hours(hour);
+                if send < Utc::now() {
+                    return LineResponse::PassedDate;
+                }
+                DateTime::<Utc>::from_utc(send.naive_utc(), Utc)
+            },
+        },
+        todo: Todo::CreateAttendanceCheck { hour: hour },
+    };
+    let mut scheduler = SCHEDULER.get().unwrap().lock().await;
+    scheduler.push(schedule).await;
+
+    LineResponse::Success("イベントの登録に成功しました".to_string())
 }
 
 struct Attendance {
@@ -391,14 +405,18 @@ async fn get_attendance_status(attendance_id: &u32) -> Attendance {
     }
 }
 
-async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str) {
-    let text = format!(
-        "{}/{}({}){}",
-        finishing_time.month(),
-        finishing_time.day(),
-        weekday_to_jp(finishing_time.weekday()),
-        event_name
-    );
+async fn create_attendance_check(finishing_time: Option<DateTime<Utc>>, event_name: &str) {
+    let text = if let Some(finishing_time) = finishing_time {
+        format!(
+            "{}/{}({}){}",
+            finishing_time.month(),
+            finishing_time.day(),
+            weekday_to_jp(finishing_time.weekday()),
+            event_name
+        )
+    } else {
+        event_name.to_string()
+    };
 
     let lock = DB.get().expect("DBの取得に失敗しました");
     //sqlに登録
@@ -416,16 +434,19 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
             .unwrap()
             .get("attendance_id");
 
-    let schedule = Schedule {
-        id: "".to_string(),
-        schedule_type: ScheduleType::OneTime {
-            datetime: finishing_time,
-        },
-        todo: Todo::SendAttendanceInfo {
-            attendance_id: attendance_id.clone(),
-        },
-    };
-    SCHEDULER.get().unwrap().lock().await.push(schedule).await;
+    //スケジュール登録
+    if let Some(finishing_time) = finishing_time {
+        let schedule = Schedule {
+            id: "".to_string(),
+            schedule_type: ScheduleType::OneTime {
+                datetime: finishing_time,
+            },
+            todo: Todo::SendAttendanceInfo {
+                attendance_id: attendance_id.clone(),
+            },
+        };
+        SCHEDULER.get().unwrap().lock().await.push(schedule).await;
+    }
 
     //グループにメッセージ送信
     if let Some(ref group_id) = SETTINGS.BINDED_GROUP_ID {

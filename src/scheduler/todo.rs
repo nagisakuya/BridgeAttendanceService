@@ -20,7 +20,7 @@ impl Todo {
     pub async fn excute(&self, schedule_id:&str ,time:DateTime<Utc>) {
         match self {
             Self::CreateAttendanceCheck { hour } => {
-                create_attendance_check(time + Duration::hours(*hour) ,schedule_id).await;
+                create_attendance_check(Some(time + Duration::hours(*hour)) ,schedule_id).await;
             }
             Self::Test => {
                 println!("called!!!")
