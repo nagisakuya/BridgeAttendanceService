@@ -78,3 +78,4 @@ async fn send_post_request(url: &str, body: &str) -> AsyncResult<reqwest::Respon
         .send()
         .await?)
 }
+

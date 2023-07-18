@@ -1,0 +1,21 @@
+{
+  "type": "bubble",
+  "size": "micro",
+  "body": {
+    "type": "box",
+    "layout": "vertical",
+    "contents": [
+      {
+        "type": "button",
+        "action": {
+          "type": "uri",
+          "label": "%DESCRIPTION%",
+          "uri": "https://%HOST%/result?attendance_id=%ID%"
+        },
+        "color": "#222d7a",
+        "style": "link",
+        "margin": "none"
+      }
+    ]
+  }
+}

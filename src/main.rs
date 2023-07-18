@@ -33,7 +33,7 @@ struct Settings {
     HOST: String,
     LISTENING_ADDRESS: String,
     DEFAULT_ICON_URL: String,
-    GROUP_ID: Option<String>
+    BINDED_GROUP_ID: Option<String>,
 }
 
 static SETTINGS: Lazy<Settings> =
@@ -60,8 +60,6 @@ type AsyncResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + 
 async fn main() -> AsyncResult<()> {
     initialize_db().await;
     initialize_scheduler().await;
-
-    println!("{:?}",SETTINGS.GROUP_ID);
 
     let root = get_service(tower_http::services::ServeDir::new("root")).handle_error(
         |error: std::io::Error| async move {
@@ -139,20 +137,22 @@ async fn register(body: Bytes) -> StatusCode {
         return StatusCode::BAD_REQUEST;
     }
 
-    if let Err(e) = sqlx::query(&format!(
+    match push_attendance_to_db(&attendance_id,user_id,request_type).await {
+        Ok(_) => {StatusCode::OK},
+        Err(_) => {StatusCode::INTERNAL_SERVER_ERROR},
+    }
+}
+
+async fn push_attendance_to_db(attendance_id: &u32,user_id: &str,request_type:&str) -> AsyncResult<()>{
+    sqlx::query(&format!(
         "replace into attendances(attendance_id,user_id, status) values (?,?,?)",
     ))
     .bind(attendance_id)
     .bind(user_id)
     .bind(request_type)
     .execute(DB.get().unwrap())
-    .await
-    {
-        println!("{e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    };
-
-    StatusCode::OK
+    .await?;
+    Ok(())
 }
 
 async fn resieve_webhook(body: Bytes) -> StatusCode {
@@ -227,13 +227,13 @@ async fn resieve_message(event: &Value) -> Option<()> {
     //let reply_token = event.get("replyToken")?.as_str()?;
     let author = event.get("source")?.get("userId")?.as_str()?;
     let from = event.get("source")?.get("type")?.as_str()?;
+    println!("メッセージを受信:{}", event);
     if from != "user" {
         return None;
     }
 
     let text = message.get("text")?.as_str()?.to_string();
     let lines: Vec<&str> = text.lines().collect();
-    println!("メッセージを受信:{}", event);
 
     let text = match *lines.first()? {
         "休み登録" => push_exception(lines).await.get(),
@@ -409,11 +409,12 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
         .await
         .expect("attendance_checksテーブルへの書き込みに失敗しました");
 
-    let attendance_id: u32 = sqlx::query("select * from attendance_checks order by attendance_id desc limit 1")
-        .fetch_one(lock)
-        .await
-        .unwrap()
-        .get("attendance_id");
+    let attendance_id: u32 =
+        sqlx::query("select * from attendance_checks order by attendance_id desc limit 1")
+            .fetch_one(lock)
+            .await
+            .unwrap()
+            .get("attendance_id");
 
     let schedule = Schedule {
         id: "".to_string(),
@@ -425,6 +426,18 @@ async fn create_attendance_check(finishing_time: DateTime<Utc>, event_name: &str
         },
     };
     SCHEDULER.get().unwrap().lock().await.push(schedule).await;
+
+    //グループにメッセージ送信
+    if let Some(ref group_id) = SETTINGS.BINDED_GROUP_ID {
+        let message = line::PushMessage {
+            to: group_id.clone(),
+            messages: vec![Box::new(FlexMessage::new(
+                create_votation_flex(&attendance_id, &text),
+                &text,
+            ))],
+        };
+        message.send().await;
+    }
 
     //通知を送信
     push_attendance_notifications(&attendance_id).await;
@@ -440,4 +453,12 @@ fn weekday_to_jp(weekday: chrono::Weekday) -> String {
         Weekday::Fri => "金".to_string(),
         Weekday::Sat => "土".to_string(),
     }
+}
+
+fn create_votation_flex(id: &u32, description: &str) -> serde_json::Value {
+    let mut text = fs::read_to_string("vote_flex_message.json").unwrap();
+    text = text.replace("%DESCRIPTION%", description);
+    text = text.replace("%ID%", &id.to_string());
+    text = text.replace("%HOST%", &SETTINGS.HOST);
+    serde_json::from_str(&text).unwrap()
 }
