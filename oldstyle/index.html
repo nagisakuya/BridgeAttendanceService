@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <title>ブリッジ出欠</title>
+    <link rel="manifest" id="my-manifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/manifest/icon-192x192.png">
+    <script src="js.js"></script>
+    <script src="push.notification.helper.js"></script>
+    <script src="manifest.js"></script>
+    <script>
+        setManifestURL();
+        signup();
+
+        var cookie = GetCookies();
+        if (!cookie.notification_subscribed) {
+            window.onload = () => {
+                let alerts = document.querySelector('#invisible');
+            };
+        }
+
+        notification_setup(() => {
+            let alerts = document.querySelector('#invisible');
+            document.cookie = 'notification_subscribed=true';
+        }, () => {
+            let alerts = document.querySelector('#invisible');
+            document.cookie = 'notification_subscribed=false';
+        });
+
+    </script>
+    <style>
+        body {
+            text-align: center;
+        }
+
+        .link {
+            margin-top: 3vw;
+            background-color: rgba(196, 230, 213, 0.941);
+            border-radius: 1vw;
+            padding: 2.5vw 0vw;
+            width: 80%;
+            margin: 2vw auto;
+            box-shadow: 0em 0em 0.3em gray;
+            font-size: 4vw;
+            font-weight: bold;
+            color: black;
+        }
+
+        .huge-button {
+            margin-top: 2vw;
+            background-color: red;
+            border-radius: 1vw;
+            padding: 15vw;
+            width: 80%;
+            height: 30%;
+            margin-left: auto;
+            margin-right: auto;
+            margin-bottom: 2vw;
+            box-shadow: 0em 0em 0.2em gray;
+            font-size: 6vw;
+            font-weight: bold;
+        }
+
+        #invisible {
+            font-size: 4.8vw;
+        }
+    </style>
+</head>
+
+<body>
+    %ATTENDANCE_CHECKS%
+</body>
+
+</html>
